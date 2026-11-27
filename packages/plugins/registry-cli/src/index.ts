@@ -69,7 +69,10 @@ async function runExtract(ctx: CommandRunContext): Promise<number> {
 }
 
 async function runCheck(ctx: CommandRunContext): Promise<number> {
-  const res = await ctx.host.check(ctx.repoRoot, { allowRemoval: ctx.args.includes("--allow-removal") });
+  const res = await ctx.host.check(
+    ctx.repoRoot,
+    ctx.args.includes("--allow-removal") ? { allowRemoval: true } : undefined,
+  );
   if (ctx.asJson) {
     console.log(JSON.stringify(res, null, 2));
   } else {

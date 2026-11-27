@@ -325,7 +325,7 @@ export async function createPluginHost(opts: PluginHostOptions = {}): Promise<Pl
       registry,
       previousRegistry,
       stagedFiles: listStagedFiles(scanCtx.repoRoot),
-      allowRemoval: checkOpts?.allowRemoval === true || process.env.ALLOW_FEATURE_REMOVAL === "1",
+      allowRemoval: checkOpts?.allowRemoval ?? (process.env.ALLOW_FEATURE_REMOVAL === "1"),
       files: scanCtx.files,
     };
 

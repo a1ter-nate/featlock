@@ -102,9 +102,12 @@ function scanFileInvariants(file: DiscoveredFile, featureId: string): InvariantR
   return found.slice(0, 8);
 }
 
+const NON_PROD_PREFIX = /^(?:examples|templates|fixtures|testdata|__fixtures__|benchmarks|tools|scripts)\//i;
+
 function extractFromRepo(ctx: ScanContext): ExtractionOutput {
   const byArea = new Map<string, { prodFiles: DiscoveredFile[]; testFiles: DiscoveredFile[]; symbols: string[] }>();
   for (const file of ctx.files) {
+    if (!file.isTest && NON_PROD_PREFIX.test(file.rel)) continue;
     const area = areaFromPath(file.rel);
     const bucket = byArea.get(area) ?? { prodFiles: [], testFiles: [], symbols: [] };
     if (file.isTest) {
