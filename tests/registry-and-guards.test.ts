@@ -70,6 +70,19 @@ describe("SQLite Anti-Deletion Triggers, Git Diff Guards, Dup Detection & Agent 
     try {
       const clean = await host.check(repoDir);
       expect(clean.ok).toBe(true);
+      expect(clean.warnings.length).toBe(0);
+
+      fs.writeFileSync(path.join(repoDir, "tests", "billing.test.ts"), 'test.skip("charges positive amounts", () => {});\n');
+      const skippedWarn = await host.check(repoDir);
+      expect(skippedWarn.warnings.some((w) => w.rule === "linked-test-not-skipped")).toBe(true);
+      fs.writeFileSync(path.join(repoDir, "tests", "billing.test.ts"), 'test("charges positive amounts", () => {});\n');
+
+      fs.writeFileSync(path.join(repoDir, "src", "billing.ts"), 'export function charge(n: number) { if (n <= 0) throw new Error("neg"); return n + 1; }\n');
+      execFileSync("git", ["add", "src/billing.ts"], { cwd: repoDir, stdio: "ignore" });
+      const stagedWarn = await host.check(repoDir);
+      expect(stagedWarn.warnings.some((w) => w.rule === "staged-changes-record-feature")).toBe(true);
+      execFileSync("git", ["reset", "HEAD", "src/billing.ts"], { cwd: repoDir, stdio: "ignore" });
+      execFileSync("git", ["checkout", "--", "src/billing.ts"], { cwd: repoDir, stdio: "ignore" });
 
       const dups = await host.checkDup(repoDir, "billing invoice charge processor");
       expect(dups.length).toBeGreaterThan(0);

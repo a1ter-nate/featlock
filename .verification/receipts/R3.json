@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "rung": "R3",
+  "command": "bun test --timeout 30000 ./tests/cli.integration.test.ts ./tests/registry.mbt.test.ts ./tests/plugin-host.mbt.test.ts ./tests/plugin-architecture/",
+  "commitSha": "baead205b1e79c8b4a591c33d11749635d6ac526",
+  "treeHash": "aa0de9896d9f31848a1315c1c8cd02bdc04c772e37c7ee4bdc0a972aca45d8fe",
+  "exitCode": 0,
+  "durationMs": 484,
+  "metrics": {
+    "testsPassed": 10,
+    "testsFailed": 0
+  },
+  "timestamp": "2026-11-27T22:29:22.903Z",
+  "digest": "hmac:29673c5fad592408566bbe8c8c75fe30c7bb2a4736a482f43e606afc6c8fc0da"
+}

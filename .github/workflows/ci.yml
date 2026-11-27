@@ -44,7 +44,7 @@ jobs:
       - name: R2 Pure Unit, Tables & PBT
         run: bun test ./tests/
       - name: R3 Boundary & Stateful MBT
-        run: bun test ./tests/cli.integration.test.ts ./tests/registry.mbt.test.ts ./tests/plugin-host.mbt.test.ts ./tests/plugin-architecture/
+        run: bun test ./tests/cli.test.ts ./tests/registry.mbt.test.ts ./tests/plugin-host.mbt.test.ts ./tests/plugin-architecture/ ./tests/packages/
       - name: R5 Formal Sync, Laws & Proof
         run: |
           bunx vstack formal-sync . --fail

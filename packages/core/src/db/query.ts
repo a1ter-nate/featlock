@@ -45,9 +45,8 @@ export function findDuplicateFeatures(
     for (const tok of queryTokens) {
       if (featTokens.has(tok)) matched.push(tok);
     }
-    const unionSize = new Set([...queryTokens, ...featTokens]).size;
     const denom = Math.min(queryTokens.size, Math.max(1, featTokens.size));
-    const score = unionSize > 0 ? Number((matched.length / denom).toFixed(3)) : 0;
+    const score = Number((matched.length / denom).toFixed(3));
     if (matched.length >= 2 || score >= 0.4) {
       results.push({ featureId: f.id, name: f.name, score, matchedTokens: matched });
     }

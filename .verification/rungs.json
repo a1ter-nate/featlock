@@ -26,7 +26,7 @@
       }
     },
     "R3": {
-      "command": "bun test --timeout 30000 ./tests/cli.integration.test.ts ./tests/registry.mbt.test.ts ./tests/plugin-host.mbt.test.ts ./tests/plugin-architecture/",
+      "command": "bun test --timeout 30000 ./tests/cli.test.ts ./tests/registry.mbt.test.ts ./tests/plugin-host.mbt.test.ts ./tests/plugin-architecture/ ./tests/packages/",
       "required": true
     },
     "R5": {

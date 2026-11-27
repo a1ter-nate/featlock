@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "rung": "R5",
+  "command": "bunx vstack formal-sync . --fail && bunx vstack laws . --fail && bunx vstack canary . --test-cmd \"bun test --timeout 30000 ./tests/registry-and-guards.test.ts ./tests/registry.table.test.ts\" --targets packages/core/src/db/query.ts,packages/plugins/anti-deletion-guard/src/index.ts --max-mutants 6 --min-kill-rate 0.75 --fail",
+  "commitSha": "baead205b1e79c8b4a591c33d11749635d6ac526",
+  "treeHash": "aa0de9896d9f31848a1315c1c8cd02bdc04c772e37c7ee4bdc0a972aca45d8fe",
+  "exitCode": 0,
+  "durationMs": 2240,
+  "timestamp": "2026-11-27T22:29:25.195Z",
+  "digest": "hmac:2dc8c7a6f6155575f5ab279ffe26aa4f96129557e01ec182a7898993a1ac8678"
+}

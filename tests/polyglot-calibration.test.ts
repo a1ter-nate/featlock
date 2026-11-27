@@ -10,6 +10,8 @@ interface PolyglotCase {
   readonly expectedFeatureId: string;
   readonly expectedSymbol: string;
   readonly expectedInvKind: string;
+  readonly expectedTestPattern?: string;
+  readonly expectedExtraInvKind?: string;
 }
 
 const POLYGLOT_CASES: readonly PolyglotCase[] = [
@@ -58,10 +60,10 @@ const POLYGLOT_CASES: readonly PolyglotCase[] = [
     expectedInvKind: "go-error-guard",
   },
   {
-    lang: "C# (project + ThrowIfNull + xUnit Fact)",
+    lang: "C# (project + ThrowIfNull + throw guard + xUnit Fact)",
     files: {
       "src/Polly.Core/RetryStrategy.cs":
-        "public sealed class RetryStrategy {\n  public void Execute(object arg) {\n    ArgumentNullException.ThrowIfNull(arg);\n  }\n}\n",
+        "public sealed class RetryStrategy {\n  public void Execute(object arg, int count) {\n    ArgumentNullException.ThrowIfNull(arg);\n    if (count <= 0)\n      throw new ArgumentOutOfRangeException(nameof(count));\n  }\n}\n",
       "test/Polly.Core.Tests/RetryStrategyTests.cs":
         "public class RetryStrategyTests {\n  [Fact]\n  public void Execute_Works() {}\n}\n",
       "src/Snippets/Example.cs": "public class SnippetDemo {}\n",
@@ -69,13 +71,15 @@ const POLYGLOT_CASES: readonly PolyglotCase[] = [
     expectedFeatureId: "feat.polly-core",
     expectedSymbol: "RetryStrategy",
     expectedInvKind: "csharp-guard-clause",
+    expectedTestPattern: "Execute_Works",
+    expectedExtraInvKind: "precondition-guard",
   },
 ];
 
 describe("Polyglot OSS Titan Calibration Matrix", () => {
   test.each(POLYGLOT_CASES)(
     "extracts feature, exported symbol, linked test, and invariant for $lang while excluding non-prod noise",
-    async ({ files, expectedFeatureId, expectedSymbol, expectedInvKind }) => {
+    async ({ files, expectedFeatureId, expectedSymbol, expectedInvKind, expectedTestPattern, expectedExtraInvKind }) => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), "featlock-poly-"));
       try {
         for (const [rel, body] of Object.entries(files)) {
@@ -89,8 +93,15 @@ describe("Polyglot OSS Titan Calibration Matrix", () => {
           const feat = out.features.find((f) => f.id === expectedFeatureId);
           expect(feat).toBeDefined();
           expect(feat?.summary).toContain(expectedSymbol);
-          expect(out.tests.some((t) => t.featureId === expectedFeatureId)).toBe(true);
+          const linked = out.tests.find((t) => t.featureId === expectedFeatureId);
+          expect(linked).toBeDefined();
+          const patternMatch = expectedTestPattern ? linked?.testPattern === expectedTestPattern : true;
+          expect(patternMatch).toBe(true);
           expect(out.invariants.some((i) => i.featureId === expectedFeatureId && i.kind === expectedInvKind)).toBe(true);
+          const extraInvMatch = expectedExtraInvKind
+            ? out.invariants.some((i) => i.featureId === expectedFeatureId && i.kind === expectedExtraInvKind)
+            : true;
+          expect(extraInvMatch).toBe(true);
           expect(out.features.some((f) => /bench|fuzz|snippets/i.test(f.id))).toBe(false);
         } finally {
           await host.dispose();

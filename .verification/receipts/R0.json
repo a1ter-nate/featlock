@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "rung": "R0",
+  "command": "bunx oxlint -c .oxlintrc.json --deny-warnings src packages tests examples && bun run lint:no-comments && bun run lint:state-machines",
+  "commitSha": "baead205b1e79c8b4a591c33d11749635d6ac526",
+  "treeHash": "aa0de9896d9f31848a1315c1c8cd02bdc04c772e37c7ee4bdc0a972aca45d8fe",
+  "exitCode": 0,
+  "durationMs": 527,
+  "timestamp": "2026-11-27T22:29:17.874Z",
+  "digest": "hmac:7dde7365086f691f2e1b3527239072cf60e3559abbe311ced08fdf44803a39c6"
+}
