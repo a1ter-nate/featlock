@@ -2,6 +2,22 @@ import path from "node:path";
 import type { DiscoveredFile } from "@featlock/plugin";
 import { extractTestCases } from "./polyglot.ts";
 
+export interface IndexedTestFile {
+  readonly file: DiscoveredFile;
+  readonly dir: string;
+  readonly stem: string;
+  readonly relLower: string;
+  readonly contentLower: string;
+  readonly cases: Array<{ readonly name: string; readonly line: number }>;
+}
+
+export interface TestIndex {
+  readonly all: readonly IndexedTestFile[];
+  readonly byDir: ReadonlyMap<string, readonly IndexedTestFile[]>;
+  readonly byStem: ReadonlyMap<string, readonly IndexedTestFile[]>;
+  readonly byToken: ReadonlyMap<string, readonly IndexedTestFile[]>;
+}
+
 function stemOf(relPath: string): string {
   return path.posix
     .basename(relPath, path.posix.extname(relPath))
@@ -10,6 +26,44 @@ function stemOf(relPath: string): string {
     .replace(/(?:_test|tests?)$/i, "")
     .replace(/^test_/, "")
     .toLowerCase();
+}
+
+function addToBucket(map: Map<string, IndexedTestFile[]>, key: string, item: IndexedTestFile): void {
+  if (!key) return;
+  const list = map.get(key);
+  if (list) list.push(item);
+  else map.set(key, [item]);
+}
+
+function extractTokens(text: string): Set<string> {
+  const tokens = new Set<string>();
+  for (const m of text.matchAll(/[a-z][a-z0-9_]{3,40}/g)) {
+    tokens.add(m[0]);
+    if (tokens.size >= 400) break;
+  }
+  return tokens;
+}
+
+export function buildTestIndex(allTestFiles: readonly DiscoveredFile[]): TestIndex {
+  if (!Array.isArray(allTestFiles)) throw new Error("allTestFiles must be an array.");
+  const all: IndexedTestFile[] = [];
+  const byDir = new Map<string, IndexedTestFile[]>();
+  const byStem = new Map<string, IndexedTestFile[]>();
+  const byToken = new Map<string, IndexedTestFile[]>();
+
+  for (const file of allTestFiles) {
+    const dir = path.posix.dirname(file.rel);
+    const stem = stemOf(file.rel);
+    const relLower = file.rel.toLowerCase();
+    const contentLower = file.content.toLowerCase();
+    const item: IndexedTestFile = { file, dir, stem, relLower, contentLower, cases: extractTestCases(file) };
+    all.push(item);
+    addToBucket(byDir, dir, item);
+    addToBucket(byStem, stem, item);
+    for (const part of stem.split(/[^a-z0-9]+/).filter((p) => p.length >= 4)) addToBucket(byStem, part, item);
+    for (const tok of extractTokens(`${relLower} ${contentLower.slice(0, 16_000)}`)) addToBucket(byToken, tok, item);
+  }
+  return { all, byDir, byStem, byToken };
 }
 
 function invariantKeywords(statement: string): string[] {
@@ -41,45 +95,40 @@ function findEnclosingSymbol(file: DiscoveredFile, line: number): string | null 
 }
 
 interface RootScoreContext {
-  readonly prodFile: DiscoveredFile;
+  readonly prodDir: string;
+  readonly prodStem: string;
+  readonly parentName: string;
   readonly symbols: readonly string[];
   readonly enclosingSymbol: string | null;
   readonly keywords: readonly string[];
 }
 
-function scoreTestForRoot(ctx: RootScoreContext, tf: DiscoveredFile): number {
-  if (!tf.rel) throw new Error("Test file path is required.");
-  const prodDir = path.posix.dirname(ctx.prodFile.rel);
-  const testDir = path.posix.dirname(tf.rel);
-  const prodStem = stemOf(ctx.prodFile.rel);
-  const testStem = stemOf(tf.rel);
-  const tfLower = tf.rel.toLowerCase();
-  const contentLower = tf.content.toLowerCase();
+function scoreTestForRoot(ctx: RootScoreContext, tf: IndexedTestFile): number {
+  if (!tf.file.rel) throw new Error("Test file path is required.");
   let score = 0;
 
-  if (testDir === prodDir) {
+  if (tf.dir === ctx.prodDir) {
     score += 8;
-    if (prodStem && (testStem === prodStem || testStem.startsWith(`${prodStem}_`) || testStem.startsWith(prodStem))) {
+    if (ctx.prodStem && (tf.stem === ctx.prodStem || tf.stem.startsWith(`${ctx.prodStem}_`) || tf.stem.startsWith(ctx.prodStem))) {
       score += 12;
     }
-  } else if (prodStem && prodStem !== "index" && prodStem !== "mod" && prodStem !== "lib") {
-    if (testStem === prodStem || testStem.includes(prodStem)) score += 10;
+  } else if (ctx.prodStem && ctx.prodStem !== "index" && ctx.prodStem !== "mod" && ctx.prodStem !== "lib") {
+    if (tf.stem === ctx.prodStem || tf.stem.includes(ctx.prodStem)) score += 10;
   }
 
-  const parentName = path.posix.basename(prodDir).toLowerCase();
-  if (parentName && parentName.length >= 4 && parentName !== "src" && tfLower.includes(`/${parentName}/`)) {
+  if (ctx.parentName && ctx.parentName.length >= 4 && ctx.parentName !== "src" && tf.relLower.includes(`/${ctx.parentName}/`)) {
     score += 8;
-  } else if (parentName && parentName.length >= 3 && parentName !== "src" && tfLower.includes(parentName)) {
+  } else if (ctx.parentName && ctx.parentName.length >= 3 && ctx.parentName !== "src" && tf.relLower.includes(ctx.parentName)) {
     score += 4;
   }
 
-  if (ctx.enclosingSymbol && contentLower.includes(ctx.enclosingSymbol.toLowerCase())) {
+  if (ctx.enclosingSymbol && tf.contentLower.includes(ctx.enclosingSymbol.toLowerCase())) {
     score += 18;
   }
 
   let symHits = 0;
   for (const sym of ctx.symbols) {
-    if (sym.length >= 4 && contentLower.includes(sym.toLowerCase())) {
+    if (sym.length >= 4 && tf.contentLower.includes(sym.toLowerCase())) {
       symHits += 1;
       if (symHits >= 2) break;
     }
@@ -88,7 +137,7 @@ function scoreTestForRoot(ctx: RootScoreContext, tf: DiscoveredFile): number {
 
   let kwHits = 0;
   for (const kw of ctx.keywords) {
-    if (contentLower.includes(kw) || tfLower.includes(kw)) {
+    if (tf.contentLower.includes(kw) || tf.relLower.includes(kw)) {
       kwHits += 1;
       if (kwHits >= 2) break;
     }
@@ -97,29 +146,65 @@ function scoreTestForRoot(ctx: RootScoreContext, tf: DiscoveredFile): number {
   return score;
 }
 
+function gatherCandidates(ctx: RootScoreContext, index: TestIndex): IndexedTestFile[] {
+  const seen = new Set<string>();
+  const out: IndexedTestFile[] = [];
+  const addList = (list: readonly IndexedTestFile[] | undefined): void => {
+    if (!list) return;
+    for (const item of list) {
+      if (seen.has(item.file.rel)) continue;
+      seen.add(item.file.rel);
+      out.push(item);
+      if (out.length >= 60) return;
+    }
+  };
+  addList(index.byDir.get(ctx.prodDir));
+  addList(index.byStem.get(ctx.prodStem));
+  if (ctx.enclosingSymbol) addList(index.byToken.get(ctx.enclosingSymbol.toLowerCase()));
+  for (const sym of ctx.symbols.slice(0, 6)) addList(index.byToken.get(sym.toLowerCase()));
+  for (const kw of ctx.keywords) addList(index.byToken.get(kw));
+  return out;
+}
+
 export interface RootTestQuery {
   readonly prodFile: DiscoveredFile;
   readonly symbols: readonly string[];
   readonly invariantText: string;
   readonly invariantLine: number;
-  readonly allTestFiles: readonly DiscoveredFile[];
+  readonly testIndex: TestIndex;
 }
 
-export function resolveRootTestForFile(query: RootTestQuery): DiscoveredFile | undefined {
+export function resolveRootTestForFile(query: RootTestQuery): IndexedTestFile | undefined {
   if (!query.prodFile.rel) throw new Error("prodFile.rel is required.");
-  if (query.prodFile.ext === ".rs" && extractTestCases(query.prodFile).length > 0) return query.prodFile;
+  if (query.prodFile.ext === ".rs") {
+    const inlineCases = extractTestCases(query.prodFile);
+    if (inlineCases.length > 0) {
+      return {
+        file: query.prodFile,
+        dir: path.posix.dirname(query.prodFile.rel),
+        stem: stemOf(query.prodFile.rel),
+        relLower: query.prodFile.rel.toLowerCase(),
+        contentLower: "",
+        cases: inlineCases,
+      };
+    }
+  }
 
+  const prodDir = path.posix.dirname(query.prodFile.rel);
   const ctx: RootScoreContext = {
-    prodFile: query.prodFile,
+    prodDir,
+    prodStem: stemOf(query.prodFile.rel),
+    parentName: path.posix.basename(prodDir).toLowerCase(),
     symbols: query.symbols,
     enclosingSymbol: findEnclosingSymbol(query.prodFile, query.invariantLine),
     keywords: invariantKeywords(query.invariantText),
   };
-  let best: DiscoveredFile | undefined;
+  const candidates = gatherCandidates(ctx, query.testIndex);
+  let best: IndexedTestFile | undefined;
   let bestScore = 0;
-  for (const tf of query.allTestFiles) {
+  for (const tf of candidates) {
     const score = scoreTestForRoot(ctx, tf);
-    if (score > bestScore || (score === bestScore && score > 0 && best && tf.rel.localeCompare(best.rel) < 0)) {
+    if (score > bestScore || (score === bestScore && score > 0 && best && tf.file.rel.localeCompare(best.file.rel) < 0)) {
       bestScore = score;
       best = tf;
     }

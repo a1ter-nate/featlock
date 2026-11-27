@@ -179,6 +179,27 @@ function checkGitAntiDeletion(ctx: CheckContext): GuardViolation[] {
   return violations;
 }
 
+function checkVanishedFeatures(ctx: CheckContext): GuardViolation[] {
+  if (ctx.allowRemoval || ctx.registry.features.length === 0) return [];
+  const liveFeatureIds = new Set(ctx.liveExtraction.features.map((f) => f.id));
+  if (liveFeatureIds.size === 0) return [];
+  const violations: GuardViolation[] = [];
+  for (const feat of ctx.registry.features) {
+    if (feat.status !== "active" || feat.source !== "ast") continue;
+    if (liveFeatureIds.has(feat.id)) continue;
+    violations.push({
+      id: `FLK:feature-vanished:${feat.id}`,
+      rule: "feature-removed-from-code",
+      severity: "error",
+      featureId: feat.id,
+      file: "features/registry.sql",
+      message: `BLOCKED: Active extracted feature '${feat.id}' (${feat.name}) vanished from the codebase without ADR retirement.`,
+      fix: `Restore the '${feat.area}' source files or formally retire '${feat.id}' with adr_ref + removal_reason and ALLOW_FEATURE_REMOVAL=1.`,
+    });
+  }
+  return violations;
+}
+
 function checkLiveExtractionDrift(ctx: CheckContext): GuardViolation[] {
   if (ctx.registry.features.length === 0) return [];
   const violations: GuardViolation[] = [];
@@ -266,6 +287,7 @@ export default Plugin.define({
           ...checkActiveFeatureCoverage(checkCtx),
           ...checkInvariantLiveness(checkCtx),
           ...checkGitAntiDeletion(checkCtx),
+          ...checkVanishedFeatures(checkCtx),
           ...checkLiveExtractionDrift(checkCtx),
           ...checkStagedDiffRecorded(checkCtx),
         ],

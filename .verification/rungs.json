@@ -15,7 +15,7 @@
       "required": true,
       "canary": {
         "enabled": true,
-        "testCommand": "bun test --timeout 30000 ./tests/registry-and-guards.test.ts ./tests/registry.table.test.ts ./tests/polyglot-calibration.test.ts ./tests/state-and-registry.pbt.test.ts ./tests/history-replay-evals.test.ts",
+        "testCommand": "bun test --timeout 30000 ./tests/registry-and-guards.test.ts ./tests/registry.table.test.ts ./tests/polyglot-calibration.test.ts ./tests/state-and-registry.pbt.test.ts ./tests/history-replay-evals.test.ts ./tests/deep-titan-evals.test.ts",
         "targets": [
           "packages/core/src/db/query.ts",
           "packages/plugins/anti-deletion-guard/src/index.ts",

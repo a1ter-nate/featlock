@@ -161,8 +161,17 @@ function matchPolyglotLine(
       const cmd = /\bCommand\.make\s*\(\s*["']([^"']+)["']/.exec(text)?.[1] ?? "command";
       return makeInv({ file, featureId, kind: "cli-contract", line: ln, confidence: 0.9, statement: `CLI subcommand '${cmd}' contract registered at ${file.rel}:${ln}`, guardAnchor: text, suffix: `cli-${slugifyIdentifier(cmd)}` });
     }
-    if (/\bif\s*\([^)]{2,140}\)/.test(text) && /\bthrow\s+new\s+(?:[A-Z]\w*)?Error\s*\(/.test(next3)) {
-      return makeInv({ file, featureId, kind: "precondition-guard", line: ln, confidence: 0.85, statement: `Precondition fail-closed guard: ${text.slice(0, 110)}`, guardAnchor: text, suffix: "precondition" });
+    if (
+      /\bif\s*\([^)]{2,140}\)/.test(text) &&
+      /\bthrow\s+(?:new\s+(?:[A-Z]\w*)?(?:Error|Exception)|[A-Z]\w*(?:Error|Exception)\.[A-Za-z_]\w*)\s*\(/.test(next3)
+    ) {
+      return makeInv({ file, featureId, kind: "precondition-guard", line: ln, confidence: 0.88, statement: `Precondition fail-closed guard: ${text.slice(0, 110)}`, guardAnchor: text, suffix: "precondition" });
+    }
+    if (
+      /\bif\s*\([^)]{2,140}\)/.test(text) &&
+      /\breturn\b[\s\S]{0,160}\b(?:[a-z]\w*(?:Rejection|Denied|Forbidden|Unauthorized|Invalid)\s*\(|new\s+Response\s*\([^)]*40[0134]\b)/.test(windowSlice(lines, i, 5))
+    ) {
+      return makeInv({ file, featureId, kind: "fail-closed-return-guard", line: ln, confidence: 0.86, statement: `Fail-closed rejection guard: ${text.slice(0, 110)}`, guardAnchor: text, suffix: "reject" });
     }
     if (/\b(?:assert\.ok|invariant)\s*\(/.test(text)) {
       return makeInv({ file, featureId, kind: "runtime-invariant", line: ln, confidence: 0.88, statement: `Runtime invariant check: ${text.slice(0, 110)}`, guardAnchor: text, suffix: "invariant" });
@@ -181,7 +190,11 @@ function matchPolyglotLine(
   if (file.ext === ".py") {
     if (/^(?:if|elif)\s+[^:]{2,120}:/.test(text) && /\braise\s+[A-Z][A-Za-z0-9_]*\s*\(/.test(windowSlice(lines, i, 9))) {
       const anchor = text.replace(/\s*#.*$/, "").trim();
-      return makeInv({ file, featureId, kind: "precondition-guard", line: ln, confidence: 0.86, statement: `Python precondition guard: ${anchor.slice(0, 110)}`, guardAnchor: anchor, suffix: "py-raise" });
+      return makeInv({ file, featureId, kind: "precondition-guard", line: ln, confidence: 0.88, statement: `Python precondition guard: ${anchor.slice(0, 110)}`, guardAnchor: anchor, suffix: "py-raise" });
+    }
+    if (/^except\s+\(?[A-Za-z0-9_.,\s]+\)?(?:\s+as\s+\w+)?\s*:/.test(text) && /\braise\s+[A-Z][A-Za-z0-9_]*\s*\(/.test(windowSlice(lines, i, 4))) {
+      const anchor = text.replace(/\s*#.*$/, "").trim();
+      return makeInv({ file, featureId, kind: "py-except-guard", line: ln, confidence: 0.87, statement: `Python exception translation guard: ${anchor.slice(0, 110)}`, guardAnchor: anchor, suffix: "py-except" });
     }
     if (/^assert\s+[^#]{3,120}/.test(text)) {
       return makeInv({ file, featureId, kind: "python-assert-guard", line: ln, confidence: 0.85, statement: `Python invariant assertion: ${text.slice(0, 110)}`, guardAnchor: text, suffix: "py-assert" });

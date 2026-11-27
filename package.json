@@ -4,6 +4,24 @@
   "type": "module",
   "description": "Tight-core, plugin-extensible SQLite feature, test, and invariant registry & agent guard system — combining AST scanners, RepoSpec graphs, Veristack verification signals, and multi-pass AI agent discovery.",
   "license": "MIT",
+  "homepage": "https://github.com/a1ter-nate/featlock#readme",
+  "bugs": {
+    "url": "https://github.com/a1ter-nate/featlock/issues"
+  },
+  "keywords": [
+    "features",
+    "invariants",
+    "anti-deletion",
+    "sqlite",
+    "ai-agents",
+    "static-analysis",
+    "verification",
+    "guardrails",
+    "bun"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "files": [
     "bin/",
     "dist/",
@@ -11,6 +29,7 @@
     "packages/",
     "examples/plugins/demo-toggle/",
     "skill/",
+    "LICENSE",
     "README.md"
   ],
   "repository": {
