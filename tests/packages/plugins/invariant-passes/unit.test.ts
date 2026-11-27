@@ -9,7 +9,12 @@ describe("@featlock/plugin-invariant-passes unit contract", () => {
     try {
       const packets = await host.buildAgentPasses(process.cwd());
       expect(packets.length).toBe(4);
-      expect(packets.map((p) => p.passId)).toEqual(["pass-1-surfaces", "pass-2-domain-invariants", "pass-3-state-and-auth", "pass-4-test-oracle-audit"]);
+      expect(packets.map((p) => p.passId)).toEqual([
+        "pass-1-feature-inventory",
+        "pass-2-test-binding",
+        "pass-3-invariant-mining",
+        "pass-4-regression-guard-audit",
+      ]);
     } finally {
       await host.dispose();
     }

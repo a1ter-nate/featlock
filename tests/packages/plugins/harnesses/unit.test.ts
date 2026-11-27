@@ -3,7 +3,7 @@ import { createPluginHost } from "@featlock/core";
 import harnessesPlugin from "../../../../packages/plugins/harnesses/src/index.ts";
 
 describe("@featlock/plugin-harnesses unit contract", () => {
-  test("registers claude, cursor, codex, and git-hook agent harnesses", async () => {
+  test("registers claude, cursor, codex, and copilot agent harnesses", async () => {
     expect(harnessesPlugin.id).toBe("featlock.harnesses");
     const host = await createPluginHost({ includeBuiltins: false, plugins: [harnessesPlugin] });
     try {
@@ -11,7 +11,7 @@ describe("@featlock/plugin-harnesses unit contract", () => {
       expect(ids).toContain("claude");
       expect(ids).toContain("cursor");
       expect(ids).toContain("codex");
-      expect(ids).toContain("git-hook");
+      expect(ids).toContain("copilot");
     } finally {
       await host.dispose();
     }

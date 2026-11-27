@@ -2,6 +2,7 @@ node_modules/
 dist/
 out/
 .featlock/
+.verification/receipts/
 .repospec-out/
 *.sqlite
 *.sqlite-wal
