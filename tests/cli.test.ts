@@ -70,6 +70,15 @@ describe("FeatLock CLI Boundary Integration Suite", () => {
     expect(runCli(["hooks", "status", "--json"], tmpRepo).status).toBe(0);
     expect(runCli(["hooks", "off", "--json"], tmpRepo).status).toBe(0);
 
+    fs.mkdirSync(path.join(tmpRepo, "orders"), { recursive: true });
+    const queryWithSameNameDir = runCli(["query", "orders", "--json"], tmpRepo);
+    expect(queryWithSameNameDir.status).toBe(0);
+    expect((JSON.parse(queryWithSameNameDir.stdout) as { matches: unknown[] }).matches.length).toBeGreaterThanOrEqual(1);
+
+    const queryViaRepoFlag = runCli(["query", "orders", "--repo", tmpRepo, "--json"], os.tmpdir());
+    expect(queryViaRepoFlag.status).toBe(0);
+    expect((JSON.parse(queryViaRepoFlag.stdout) as { matches: unknown[] }).matches.length).toBeGreaterThanOrEqual(1);
+
     expect(runCli(["unknown-subcommand"], tmpRepo).status).toBe(2);
   });
 });

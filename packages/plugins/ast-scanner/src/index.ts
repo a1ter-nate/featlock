@@ -18,8 +18,8 @@ import { buildTestIndex, resolveRootTestForFile, type TestIndex } from "./root-t
 
 const NON_PROD_PREFIX =
   /^(?:\.github|examples|samples|snippets|templates|fixtures|testdata|__fixtures__|bench|benchmarks|benchsuite|perf-measures|fuzz|docs|docs_src|tools|scripts|build|eng|pkg|ci|caddytest)\//i;
-const NON_PROD_SEGMENT = /(?:^|\/)(?:snippets|samples|benchmarks|__fixtures__|testdata)\//i;
-const GENERATED_FILE_RE = /\.(?:d\.ts|pb\.go|g\.cs|generated\.[a-z]+)$/i;
+const NON_PROD_SEGMENT = /(?:^|\/)(?:snippets|samples|benchmarks|__fixtures__|fixtures|testdata|examples|templates|caught|snapshots)\//i;
+const GENERATED_FILE_RE = /\.(?:d\.ts|pb\.go|g\.cs|generated\.[a-z]+)$|(?:^|\/)(?:cake\.cs|build\.rs|setup\.py|conftest\.py)$/i;
 const SRC_SUBFEATURE_CONTAINERS = new Set(["middleware", "helper", "router", "adapter", "plugins", "features", "services", "handlers"]);
 
 function areaFromPath(rel: string, ext: string): string {

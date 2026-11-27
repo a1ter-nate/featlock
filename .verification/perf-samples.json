@@ -2,19 +2,19 @@
   "samples": [
     {
       "n": 40,
-      "timeMs": 0.89
+      "timeMs": 1.08
     },
     {
       "n": 80,
-      "timeMs": 1.61
+      "timeMs": 1.95
     },
     {
       "n": 160,
-      "timeMs": 2.86
+      "timeMs": 3.41
     },
     {
       "n": 320,
-      "timeMs": 5.91
+      "timeMs": 6.74
     }
   ],
   "maxTimeExponent": 1.65

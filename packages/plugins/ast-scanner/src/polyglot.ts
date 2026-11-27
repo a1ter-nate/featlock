@@ -1,5 +1,6 @@
 import { parseSync } from "oxc-parser";
 import type { DiscoveredFile, InvariantRecord } from "@featlock/plugin";
+import { maskSourceForGuards } from "./lexical.ts";
 
 const TS_JS_EXTS = new Set([".ts", ".tsx", ".mts", ".js", ".mjs"]);
 
@@ -142,28 +143,40 @@ function windowSlice(lines: readonly string[], start: number, span: number): str
     .join(" ");
 }
 
-function matchTsJsGuard(file: DiscoveredFile, featureId: string, lines: readonly string[], i: number): InvariantRecord | null {
-  const text = (lines[i] ?? "").trim();
-  const next3 = windowSlice(lines, i, 3);
+interface MaskedLines {
+  readonly lines: readonly string[];
+  readonly rawLines: readonly string[];
+}
+
+function matchTsJsGuard(
+  file: DiscoveredFile,
+  featureId: string,
+  scan: MaskedLines,
+  i: number,
+): InvariantRecord | null {
+  if (i < 0 || i >= scan.lines.length) throw new Error("Line index out of bounds.");
+  const masked = (scan.lines[i] ?? "").trim();
+  const raw = (scan.rawLines[i] ?? "").trim();
+  const next3 = windowSlice(scan.lines, i, 3);
   const ln = i + 1;
-  if (/\bCommand\.make\s*\(\s*["']([^"']+)["']/.test(text)) {
-    const cmd = /\bCommand\.make\s*\(\s*["']([^"']+)["']/.exec(text)?.[1] ?? "command";
-    return makeInv({ file, featureId, kind: "cli-contract", line: ln, confidence: 0.9, statement: `CLI subcommand '${cmd}' contract registered at ${file.rel}:${ln}`, guardAnchor: text, suffix: `cli-${slugifyIdentifier(cmd)}` });
+  if (/\bCommand\.make\s*\(/.test(masked) && /\bCommand\.make\s*\(\s*["']([^"']+)["']/.test(raw)) {
+    const cmd = /\bCommand\.make\s*\(\s*["']([^"']+)["']/.exec(raw)?.[1] ?? "command";
+    return makeInv({ file, featureId, kind: "cli-contract", line: ln, confidence: 0.9, statement: `CLI subcommand '${cmd}' contract registered at ${file.rel}:${ln}`, guardAnchor: raw, suffix: `cli-${slugifyIdentifier(cmd)}` });
   }
   if (
-    /\bif\s*\([^)]{2,140}\)/.test(text) &&
+    /\bif\s*\([^)]{2,140}\)/.test(masked) &&
     /\bthrow\s+(?:new\s+(?:[A-Z]\w*)?(?:Error|Exception)|[A-Z]\w*(?:Error|Exception)\.[A-Za-z_]\w*)\s*\(/.test(next3)
   ) {
-    return makeInv({ file, featureId, kind: "precondition-guard", line: ln, confidence: 0.88, statement: `Precondition fail-closed guard: ${text.slice(0, 110)}`, guardAnchor: text, suffix: "precondition" });
+    return makeInv({ file, featureId, kind: "precondition-guard", line: ln, confidence: 0.88, statement: `Precondition fail-closed guard: ${raw.slice(0, 110)}`, guardAnchor: raw, suffix: "precondition" });
   }
   if (
-    /\bif\s*\([^)]{2,140}\)/.test(text) &&
-    /\breturn\b[\s\S]{0,160}\b(?:[a-z]\w*(?:Rejection|Denied|Forbidden|Unauthorized|Invalid)\s*\(|new\s+Response\s*\([^)]*40[0134]\b)/.test(windowSlice(lines, i, 5))
+    /\bif\s*\([^)]{2,140}\)/.test(masked) &&
+    /\breturn\b[\s\S]{0,160}\b(?:[a-z]\w*(?:Rejection|Denied|Forbidden|Unauthorized|Invalid)\s*\(|new\s+Response\s*\([^)]*40[0134]\b)/.test(windowSlice(scan.lines, i, 5))
   ) {
-    return makeInv({ file, featureId, kind: "fail-closed-return-guard", line: ln, confidence: 0.86, statement: `Fail-closed rejection guard: ${text.slice(0, 110)}`, guardAnchor: text, suffix: "reject" });
+    return makeInv({ file, featureId, kind: "fail-closed-return-guard", line: ln, confidence: 0.86, statement: `Fail-closed rejection guard: ${raw.slice(0, 110)}`, guardAnchor: raw, suffix: "reject" });
   }
-  if (/\b(?:assert\.ok|invariant)\s*\(/.test(text)) {
-    return makeInv({ file, featureId, kind: "runtime-invariant", line: ln, confidence: 0.88, statement: `Runtime invariant check: ${text.slice(0, 110)}`, guardAnchor: text, suffix: "invariant" });
+  if (/\b(?:assert\.ok|invariant)\s*\(/.test(masked)) {
+    return makeInv({ file, featureId, kind: "runtime-invariant", line: ln, confidence: 0.88, statement: `Runtime invariant check: ${raw.slice(0, 110)}`, guardAnchor: raw, suffix: "invariant" });
   }
   return null;
 }
@@ -171,38 +184,40 @@ function matchTsJsGuard(file: DiscoveredFile, featureId: string, lines: readonly
 function matchPolyglotLine(
   file: DiscoveredFile,
   featureId: string,
-  lines: readonly string[],
+  scan: MaskedLines,
   i: number,
 ): InvariantRecord | null {
+  const { lines, rawLines } = scan;
   if (i < 0 || i >= lines.length) throw new Error("Line index out of bounds.");
   const text = (lines[i] ?? "").trim();
+  const raw = (rawLines[i] ?? "").trim();
   const next3 = windowSlice(lines, i, 3);
   const ln = i + 1;
 
   if (/\bRAISE\s*\(\s*ABORT\b/i.test(text)) {
-    return makeInv({ file, featureId, kind: "db-trigger-guard", line: ln, confidence: 0.95, statement: `SQLite trigger aborts disallowed mutation at ${file.rel}:${ln}`, guardAnchor: text, suffix: "sql-trigger" });
+    return makeInv({ file, featureId, kind: "db-trigger-guard", line: ln, confidence: 0.95, statement: `SQLite trigger aborts disallowed mutation at ${file.rel}:${ln}`, guardAnchor: raw, suffix: "sql-trigger" });
   }
-  if (TS_JS_EXTS.has(file.ext)) return matchTsJsGuard(file, featureId, lines, i);
+  if (TS_JS_EXTS.has(file.ext)) return matchTsJsGuard(file, featureId, scan, i);
   if (file.ext === ".rs") {
     if (/\b(?:assert!|assert_eq!|assert_ne!|debug_assert!|ensure!|bail!)\s*\(/.test(text)) {
-      return makeInv({ file, featureId, kind: "rust-assert-guard", line: ln, confidence: 0.9, statement: `Rust invariant assertion: ${text.slice(0, 110)}`, guardAnchor: text, suffix: "rs-assert" });
+      return makeInv({ file, featureId, kind: "rust-assert-guard", line: ln, confidence: 0.9, statement: `Rust invariant assertion: ${raw.slice(0, 110)}`, guardAnchor: raw, suffix: "rs-assert" });
     }
     if (/^if\s+[^{]{2,120}\{/.test(text) && /\breturn\s+Err\s*\(/.test(windowSlice(lines, i, 5))) {
-      return makeInv({ file, featureId, kind: "precondition-guard", line: ln, confidence: 0.84, statement: `Rust error guard: ${text.slice(0, 110)}`, guardAnchor: text, suffix: "rs-err" });
+      return makeInv({ file, featureId, kind: "precondition-guard", line: ln, confidence: 0.84, statement: `Rust error guard: ${raw.slice(0, 110)}`, guardAnchor: raw, suffix: "rs-err" });
     }
     return null;
   }
   if (file.ext === ".py") {
     if (/^(?:if|elif)\s+[^:]{2,120}:/.test(text) && /\braise\s+[A-Z][A-Za-z0-9_]*\s*\(/.test(windowSlice(lines, i, 9))) {
-      const anchor = text.replace(/\s*#.*$/, "").trim();
+      const anchor = raw.replace(/\s*#.*$/, "").trim();
       return makeInv({ file, featureId, kind: "precondition-guard", line: ln, confidence: 0.88, statement: `Python precondition guard: ${anchor.slice(0, 110)}`, guardAnchor: anchor, suffix: "py-raise" });
     }
     if (/^except\s+\(?[A-Za-z0-9_.,\s]+\)?(?:\s+as\s+\w+)?\s*:/.test(text) && /\braise\s+[A-Z][A-Za-z0-9_]*\s*\(/.test(windowSlice(lines, i, 4))) {
-      const anchor = text.replace(/\s*#.*$/, "").trim();
+      const anchor = raw.replace(/\s*#.*$/, "").trim();
       return makeInv({ file, featureId, kind: "py-except-guard", line: ln, confidence: 0.87, statement: `Python exception translation guard: ${anchor.slice(0, 110)}`, guardAnchor: anchor, suffix: "py-except" });
     }
     if (/^assert\s+[^#]{3,120}/.test(text)) {
-      return makeInv({ file, featureId, kind: "python-assert-guard", line: ln, confidence: 0.85, statement: `Python invariant assertion: ${text.slice(0, 110)}`, guardAnchor: text, suffix: "py-assert" });
+      return makeInv({ file, featureId, kind: "python-assert-guard", line: ln, confidence: 0.85, statement: `Python invariant assertion: ${raw.slice(0, 110)}`, guardAnchor: raw, suffix: "py-assert" });
     }
     return null;
   }
@@ -211,16 +226,16 @@ function matchPolyglotLine(
     if (/^if\s+[^{]{2,120}\{/.test(text) && /\b(?:fmt\.Errorf|errors\.New|http\.Error)\s*\(/.test(next5)) {
       const isHttp = /\bhttp\.Error\s*\(/.test(next5);
       const kind = isHttp ? "go-http-guard" : "go-error-guard";
-      return makeInv({ file, featureId, kind, line: ln, confidence: isHttp ? 0.94 : 0.84, statement: `Go guard: ${text.slice(0, 110)}`, guardAnchor: text, suffix: "go-err" });
+      return makeInv({ file, featureId, kind, line: ln, confidence: isHttp ? 0.94 : 0.84, statement: `Go guard: ${raw.slice(0, 110)}`, guardAnchor: raw, suffix: "go-err" });
     }
     return null;
   }
   if (file.ext === ".cs") {
     if (/\b(?:ArgumentNullException|ArgumentOutOfRangeException|ArgumentException|ObjectDisposedException)\.ThrowIf\w*\s*\(|\bGuard\.(?:NotNull|Range|NotNullOrEmpty)\s*\(/.test(text)) {
-      return makeInv({ file, featureId, kind: "csharp-guard-clause", line: ln, confidence: 0.92, statement: `C# guard clause: ${text.slice(0, 110)}`, guardAnchor: text, suffix: "cs-guard" });
+      return makeInv({ file, featureId, kind: "csharp-guard-clause", line: ln, confidence: 0.92, statement: `C# guard clause: ${raw.slice(0, 110)}`, guardAnchor: raw, suffix: "cs-guard" });
     }
     if (/^if\s*\([^)]{2,140}\)/.test(text) && /\bthrow\s+new\s+[A-Z]\w*Exception\s*\(/.test(next3)) {
-      return makeInv({ file, featureId, kind: "precondition-guard", line: ln, confidence: 0.85, statement: `C# precondition guard: ${text.slice(0, 110)}`, guardAnchor: text, suffix: "cs-throw" });
+      return makeInv({ file, featureId, kind: "precondition-guard", line: ln, confidence: 0.85, statement: `C# precondition guard: ${raw.slice(0, 110)}`, guardAnchor: raw, suffix: "cs-throw" });
     }
   }
   return null;
@@ -231,13 +246,15 @@ export function scanFileInvariants(file: DiscoveredFile, featureId: string): Inv
   if (file.isTest) return [];
   const found: InvariantRecord[] = [];
   const seenIds = new Set<string>();
-  const lines = file.content.split("\n");
+  const rawLines = file.content.split("\n");
+  const lines = maskSourceForGuards(file.content, file.ext).split("\n");
+  const scan: MaskedLines = { lines, rawLines };
   const isRust = file.ext === ".rs";
   for (let i = 0; i < lines.length; i += 1) {
     const text = (lines[i] ?? "").trim();
     if (!text) continue;
     if (isRust && text.startsWith("#[cfg(test)]")) break;
-    const inv = matchPolyglotLine(file, featureId, lines, i);
+    const inv = matchPolyglotLine(file, featureId, scan, i);
     if (inv && !seenIds.has(inv.id)) {
       seenIds.add(inv.id);
       found.push(inv);

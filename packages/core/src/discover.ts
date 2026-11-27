@@ -22,7 +22,10 @@ const SKIP_DIRS = new Set([
 
 const SOURCE_EXTS = new Set([".ts", ".tsx", ".mts", ".js", ".mjs", ".py", ".rs", ".cs", ".go", ".sql"]);
 
+const NON_LIVE_TEST_RE = /(?:^|\/)(?:examples|fixtures|templates|caught|testdata|snapshots)\//i;
+
 function isTestPath(rel: string): boolean {
+  if (NON_LIVE_TEST_RE.test(rel)) return false;
   return (
     /(?:^|\/)(?:tests?|__tests__|spec|caddytest|testmocks)\//i.test(rel) ||
     /\.(?:test|spec)\.[cm]?[jt]sx?$/i.test(rel) ||
