@@ -1,0 +1,13 @@
+{
+  "name": "@featlock/core",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tight core kernel for FeatLock: replayable State, plugin supervisor, SQLite feature/invariant registry with anti-deletion triggers, and repo discovery.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@featlock/plugin": "workspace:*"
+  },
+  "files": ["src/"]
+}

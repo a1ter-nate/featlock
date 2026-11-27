@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "service": "featlock",
+  "controls": [
+    {
+      "id": "FLK-CP-001",
+      "seam": "tight-core plugin boundary and dogfooding",
+      "failureMode": "Built-in plugins bypass @featlock/plugin or core imports feature plugins directly",
+      "severity": 9,
+      "maxAllowedRung": "R2",
+      "controlRef": "tests/plugin-architecture/structural.test.ts",
+      "reqId": "REQ-FLK-PLUGINS-01"
+    },
+    {
+      "id": "FLK-CP-002",
+      "seam": "SQLite anti-deletion triggers and git-diff removal guard",
+      "failureMode": "Agents silently delete active features, unlink tests, or drop invariants",
+      "severity": 10,
+      "maxAllowedRung": "R2",
+      "controlRef": "tests/registry-and-guards.test.ts",
+      "reqId": "REQ-FLK-GUARD-01"
+    }
+  ],
+  "formalChecks": []
+}

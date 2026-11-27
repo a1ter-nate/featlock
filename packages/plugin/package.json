@@ -1,0 +1,10 @@
+{
+  "name": "@featlock/plugin",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Public plugin authoring SDK for FeatLock (tight-core replayable transforms, hooks, and domain contracts).",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": ["src/"]
+}

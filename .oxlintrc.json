@@ -1,0 +1,16 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error"
+  },
+  "ignorePatterns": ["node_modules/**", "dist/**", "out/**", ".featlock/**"],
+  "rules": {
+    "no-empty": "error",
+    "no-console": "off",
+    "max-lines": ["error", { "max": 500 }],
+    "typescript/no-explicit-any": "error",
+    "typescript/no-non-null-assertion": "error",
+    "typescript/ban-ts-comment": "error"
+  }
+}
