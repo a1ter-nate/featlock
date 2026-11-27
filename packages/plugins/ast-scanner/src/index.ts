@@ -14,11 +14,13 @@ import {
   scanFileInvariants,
   slugifyIdentifier,
 } from "./polyglot.ts";
+import { resolveRootTestForFile } from "./root-tests.ts";
 
 const NON_PROD_PREFIX =
   /^(?:\.github|examples|samples|snippets|templates|fixtures|testdata|__fixtures__|bench|benchmarks|benchsuite|perf-measures|fuzz|docs|tools|scripts|build|eng|pkg|ci|caddytest)\//i;
 const NON_PROD_SEGMENT = /(?:^|\/)(?:snippets|samples|benchmarks|__fixtures__|testdata)\//i;
 const GENERATED_FILE_RE = /\.(?:d\.ts|pb\.go|g\.cs|generated\.[a-z]+)$/i;
+const SRC_SUBFEATURE_CONTAINERS = new Set(["middleware", "helper", "router", "adapter", "plugins", "features", "services", "handlers"]);
 
 function areaFromPath(rel: string, ext: string): string {
   const parts = rel.split("/");
@@ -28,6 +30,9 @@ function areaFromPath(rel: string, ext: string): string {
   if (parts[0] === "modules" && parts[1]) return `module:${parts[1]}`;
   if ((parts[0] === "cmd" || parts[0] === "internal" || parts[0] === "caddyconfig") && parts.length >= 3 && parts[1]) {
     return `${parts[0]}:${parts[1]}`;
+  }
+  if (parts[0] === "src" && parts.length >= 4 && parts[1] && parts[2] && SRC_SUBFEATURE_CONTAINERS.has(parts[1])) {
+    return `${parts[1]}:${parts[2]}`;
   }
   if (parts[0] === "src" && parts.length >= 3 && parts[1]) return parts[1];
   if (parts[0] === "tests" && parts.length >= 3 && parts[1]) return parts[1];
@@ -63,7 +68,19 @@ function matchTestsForBucket(
       matched.push({ file: pf, cases: inlineCases });
     }
   }
-  if (matched.length > 0) return matched.slice(0, 5);
+
+  const symbolStems = new Set(
+    bucket.symbols.filter((s) => s.length >= 5).map((s) => s.toLowerCase()),
+  );
+  for (const tf of allTestFiles) {
+    if (seen.has(tf.rel)) continue;
+    const stem = path.posix.basename(tf.rel, path.posix.extname(tf.rel)).toLowerCase();
+    if (symbolStems.has(stem)) {
+      seen.add(tf.rel);
+      matched.push({ file: tf, cases: extractTestCases(tf) });
+    }
+  }
+  if (matched.length > 0) return matched.slice(0, 8);
 
   const cleanArea = area.replace(/^(?:plugin|crate|module|cmd|internal|caddyconfig):/, "").toLowerCase();
   const tailToken = cleanArea.split(":").pop() ?? cleanArea;
@@ -89,7 +106,7 @@ function matchTestsForBucket(
 
 function buildFeatureRecords(
   area: string,
-  bucket: { prodFiles: DiscoveredFile[]; testFiles: DiscoveredFile[]; symbols: string[] },
+  bucket: { prodFiles: DiscoveredFile[]; testFiles: DiscoveredFile[]; symbols: string[]; fileSymbols: Map<string, string[]> },
   allTestFiles: readonly DiscoveredFile[],
 ): ExtractionOutput {
   if (bucket.prodFiles.length === 0) return { features: [], tests: [], invariants: [] };
@@ -105,33 +122,57 @@ function buildFeatureRecords(
     source: "ast",
   };
 
-  const tests: FeatureTestLink[] = [];
-  for (const hit of matchTestsForBucket(area, bucket, allTestFiles)) {
-    const pattern = hit.cases[0]?.name ?? path.posix.basename(hit.file.rel);
-    const rung = hit.file.rel.includes(".mbt.") ? "R3" : "R2";
-    tests.push({ featureId, testPath: hit.file.rel, testPattern: pattern, rung });
-  }
+  const testMap = new Map<string, FeatureTestLink>();
+  const addTestLink = (tf: DiscoveredFile, cases: Array<{ readonly name: string; readonly line: number }>): void => {
+    const pattern = cases[0]?.name ?? path.posix.basename(tf.rel);
+    const rung = tf.rel.includes(".mbt.") ? "R3" : "R2";
+    testMap.set(`${tf.rel}|${pattern}`, { featureId, testPath: tf.rel, testPattern: pattern, rung });
+  };
+  for (const hit of matchTestsForBucket(area, bucket, allTestFiles)) addTestLink(hit.file, hit.cases);
 
   const invariants: InvariantRecord[] = [];
   for (const pf of bucket.prodFiles) {
-    invariants.push(...scanFileInvariants(pf, featureId));
-    if (invariants.length >= 25) break;
+    const fileInvs = scanFileInvariants(pf, featureId);
+    const fileSyms = bucket.fileSymbols.get(pf.rel) ?? [];
+    for (const inv of fileInvs) {
+      const rootTf = resolveRootTestForFile({
+        prodFile: pf,
+        symbols: fileSyms,
+        invariantText: inv.statement,
+        invariantLine: inv.line,
+        allTestFiles,
+      });
+      if (rootTf) addTestLink(rootTf, extractTestCases(rootTf));
+      invariants.push(rootTf ? { ...inv, rootTestPath: rootTf.rel } : inv);
+      if (invariants.length >= 250) break;
+    }
+    if (invariants.length >= 250) break;
   }
-  return { features: [feature], tests, invariants: invariants.slice(0, 25) };
+  return { features: [feature], tests: [...testMap.values()], invariants };
+}
+
+interface AreaBucket {
+  readonly prodFiles: DiscoveredFile[];
+  readonly testFiles: DiscoveredFile[];
+  readonly symbols: string[];
+  readonly fileSymbols: Map<string, string[]>;
 }
 
 function extractFromRepo(ctx: ScanContext): ExtractionOutput {
   if (!ctx.repoRoot) throw new Error("ScanContext.repoRoot is required.");
-  const byArea = new Map<string, { prodFiles: DiscoveredFile[]; testFiles: DiscoveredFile[]; symbols: string[] }>();
+  const byArea = new Map<string, AreaBucket>();
   for (const file of ctx.files) {
+    if (file.rel === "features/registry.sql") continue;
     if (!file.isTest && (NON_PROD_PREFIX.test(file.rel) || NON_PROD_SEGMENT.test(file.rel) || GENERATED_FILE_RE.test(file.rel))) continue;
     const area = areaFromPath(file.rel, file.ext);
-    const bucket = byArea.get(area) ?? { prodFiles: [], testFiles: [], symbols: [] };
+    const bucket: AreaBucket = byArea.get(area) ?? { prodFiles: [], testFiles: [], symbols: [], fileSymbols: new Map() };
     if (file.isTest) {
       bucket.testFiles.push(file);
     } else {
       bucket.prodFiles.push(file);
-      for (const sym of extractExportedSymbols(file)) {
+      const syms = extractExportedSymbols(file);
+      bucket.fileSymbols.set(file.rel, syms);
+      for (const sym of syms) {
         if (!bucket.symbols.includes(sym)) bucket.symbols.push(sym);
       }
     }

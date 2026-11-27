@@ -4,6 +4,10 @@ import { Plugin, type CheckContext, type GuardViolation } from "@featlock/plugin
 
 const SKIPPED_TEST_RE = /^\s*(?:test|it|describe)\.(?:skip|todo)\s*\(/m;
 
+function normalizeWhitespace(raw: string): string {
+  return raw.replace(/\s+/g, " ").trim();
+}
+
 function checkActiveFeatureCoverage(ctx: CheckContext): GuardViolation[] {
   if (!ctx.repoRoot) throw new Error("CheckContext.repoRoot is required.");
   const violations: GuardViolation[] = [];
@@ -54,11 +58,23 @@ function checkActiveFeatureCoverage(ctx: CheckContext): GuardViolation[] {
 }
 
 function checkInvariantLiveness(ctx: CheckContext): GuardViolation[] {
+  if (!ctx.repoRoot) throw new Error("CheckContext.repoRoot is required.");
   const violations: GuardViolation[] = [];
+  const fileNormCache = new Map<string, string>();
+  const readNormalized = (rel: string): string | null => {
+    const cached: string | undefined = fileNormCache.get(rel);
+    if (cached !== undefined) return cached;
+    const abs = path.join(ctx.repoRoot, rel);
+    if (!fs.existsSync(abs)) return null;
+    const norm = normalizeWhitespace(fs.readFileSync(abs, "utf8"));
+    fileNormCache.set(rel, norm);
+    return norm;
+  };
+
   for (const inv of ctx.registry.invariants) {
     if (inv.status !== "active") continue;
-    const abs = path.join(ctx.repoRoot, inv.file);
-    if (!fs.existsSync(abs)) {
+    const normContent = readNormalized(inv.file);
+    if (normContent === null) {
       violations.push({
         id: `FLK:orphan-invariant:${inv.id}`,
         rule: "invariant-target-must-exist",
@@ -67,6 +83,33 @@ function checkInvariantLiveness(ctx: CheckContext): GuardViolation[] {
         file: inv.file,
         message: `Active invariant '${inv.id}' points to missing file '${inv.file}'.`,
         fix: "Restore the guarded file or migrate the invariant to its new home with an audit entry.",
+      });
+      continue;
+    }
+    if (inv.guardAnchor && !ctx.allowRemoval) {
+      const normAnchor = normalizeWhitespace(inv.guardAnchor);
+      if (normAnchor.length > 0 && !normContent.includes(normAnchor)) {
+        const rootHint = inv.rootTestPath ? ` (root test: ${inv.rootTestPath})` : "";
+        violations.push({
+          id: `FLK:dropped-guard:${inv.id}`,
+          rule: "invariant-guard-dropped-in-code",
+          severity: "error",
+          featureId: inv.featureId,
+          file: inv.file,
+          message: `BLOCKED: Active invariant '${inv.id}' guard disappeared from '${inv.file}'${rootHint}: expected '${normAnchor}'.`,
+          fix: `Restore the guard in '${inv.file}'${inv.rootTestPath ? ` and verify '${inv.rootTestPath}'` : ""}, or formally retire the invariant with an ADR + ALLOW_FEATURE_REMOVAL=1.`,
+        });
+      }
+    }
+    if (inv.rootTestPath && !fs.existsSync(path.join(ctx.repoRoot, inv.rootTestPath))) {
+      violations.push({
+        id: `FLK:missing-root-test:${inv.id}`,
+        rule: "invariant-root-test-missing",
+        severity: "error",
+        featureId: inv.featureId,
+        file: inv.rootTestPath,
+        message: `Active invariant '${inv.id}' root test '${inv.rootTestPath}' is missing.`,
+        fix: `Restore '${inv.rootTestPath}' or re-bind the invariant to a live root test.`,
       });
     }
   }
@@ -136,6 +179,64 @@ function checkGitAntiDeletion(ctx: CheckContext): GuardViolation[] {
   return violations;
 }
 
+function checkLiveExtractionDrift(ctx: CheckContext): GuardViolation[] {
+  if (ctx.registry.features.length === 0) return [];
+  const violations: GuardViolation[] = [];
+  const severity = ctx.strictDrift ? "error" : "warn";
+  const regFeatureIds = new Set(ctx.registry.features.map((f) => f.id));
+  const regInvIds = new Set(ctx.registry.invariants.map((i) => i.id));
+  const regAnchors = new Set(
+    ctx.registry.invariants
+      .filter((i) => i.guardAnchor)
+      .map((i) => `${i.file}|${normalizeWhitespace(i.guardAnchor ?? "")}`),
+  );
+
+  for (const liveFeat of ctx.liveExtraction.features) {
+    if (regFeatureIds.has(liveFeat.id)) continue;
+    violations.push({
+      id: `FLK:new-feature:${liveFeat.id}`,
+      rule: "unrecorded-new-feature",
+      severity,
+      featureId: liveFeat.id,
+      file: "features/registry.sql",
+      message: `Unrecorded new feature '${liveFeat.id}' (${liveFeat.name}) detected in codebase.`,
+      fix: `Run 'featlock extract --write' or 'featlock record-new --id ${liveFeat.id}' to lock this feature into features/registry.sql.`,
+    });
+  }
+
+  const regTestKeys = new Set(ctx.registry.tests.map((t) => `${t.featureId}|${t.testPath}`));
+  for (const liveTest of ctx.liveExtraction.tests) {
+    if (!regFeatureIds.has(liveTest.featureId)) continue;
+    if (regTestKeys.has(`${liveTest.featureId}|${liveTest.testPath}`)) continue;
+    violations.push({
+      id: `FLK:new-test:${liveTest.featureId}:${liveTest.testPath}`,
+      rule: "unrecorded-new-feature-test",
+      severity,
+      featureId: liveTest.featureId,
+      file: liveTest.testPath,
+      message: `Unrecorded new capability test '${liveTest.testPath}' linked to '${liveTest.featureId}'.`,
+      fix: `Run 'featlock extract --write' or 'featlock record-improvement --id ${liveTest.featureId} --test ${liveTest.testPath}' to save it.`,
+    });
+  }
+
+  for (const liveInv of ctx.liveExtraction.invariants) {
+    if (liveInv.source !== "ast" || !liveInv.guardAnchor) continue;
+    const anchorKey = `${liveInv.file}|${normalizeWhitespace(liveInv.guardAnchor)}`;
+    if (regInvIds.has(liveInv.id) || regAnchors.has(anchorKey)) continue;
+    const rootHint = liveInv.rootTestPath ? ` (root test: ${liveInv.rootTestPath})` : "";
+    violations.push({
+      id: `FLK:new-invariant:${liveInv.id}`,
+      rule: "unrecorded-new-invariant",
+      severity,
+      featureId: liveInv.featureId,
+      file: liveInv.file,
+      message: `Unrecorded new invariant '${liveInv.id}' in '${liveInv.file}:${liveInv.line}'${rootHint}: ${liveInv.statement}`,
+      fix: "Run 'featlock extract --write' or 'featlock record-improvement' to save this invariant in features/registry.sql.",
+    });
+  }
+  return violations;
+}
+
 function checkStagedDiffRecorded(ctx: CheckContext): GuardViolation[] {
   if (ctx.stagedFiles.length === 0) return [];
   const touchesCodeOrTests = ctx.stagedFiles.some((f) => /\.(?:ts|tsx|js|mjs|py|rs|cs|go)$/.test(f));
@@ -165,6 +266,7 @@ export default Plugin.define({
           ...checkActiveFeatureCoverage(checkCtx),
           ...checkInvariantLiveness(checkCtx),
           ...checkGitAntiDeletion(checkCtx),
+          ...checkLiveExtractionDrift(checkCtx),
           ...checkStagedDiffRecorded(checkCtx),
         ],
       });

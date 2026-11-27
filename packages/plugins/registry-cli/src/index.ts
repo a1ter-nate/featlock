@@ -70,9 +70,11 @@ async function runExtract(ctx: CommandRunContext): Promise<number> {
 }
 
 async function runCheck(ctx: CommandRunContext): Promise<number> {
+  const allowRemoval = ctx.args.includes("--allow-removal") ? true : undefined;
+  const strictDrift = ctx.args.includes("--strict-drift") ? true : undefined;
   const res = await ctx.host.check(
     ctx.repoRoot,
-    ctx.args.includes("--allow-removal") ? { allowRemoval: true } : undefined,
+    allowRemoval !== undefined || strictDrift !== undefined ? { allowRemoval, strictDrift } : undefined,
   );
   if (ctx.asJson) {
     console.log(JSON.stringify(res, null, 2));

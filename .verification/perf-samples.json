@@ -6,15 +6,15 @@
     },
     {
       "n": 80,
-      "timeMs": 1.98
+      "timeMs": 1.81
     },
     {
       "n": 160,
-      "timeMs": 3.03
+      "timeMs": 3.7
     },
     {
       "n": 320,
-      "timeMs": 5.99
+      "timeMs": 6.55
     }
   ],
   "maxTimeExponent": 1.65

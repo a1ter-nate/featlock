@@ -33,6 +33,8 @@ export interface InvariantRecord {
   readonly confidence: number;
   readonly source: InvariantSource;
   readonly guardRef?: string;
+  readonly guardAnchor?: string;
+  readonly rootTestPath?: string;
   readonly status: FeatureStatus;
 }
 
@@ -90,6 +92,8 @@ export interface CheckContext {
   readonly previousRegistry: RegistrySnapshot | null;
   readonly stagedFiles: readonly string[];
   readonly allowRemoval: boolean;
+  readonly strictDrift: boolean;
+  readonly liveExtraction: ExtractionOutput;
   readonly files: readonly DiscoveredFile[];
 }
 
@@ -178,7 +182,10 @@ export interface CheckHookEvent {
 export interface HostApiFacade {
   readonly listPlugins: () => readonly PluginStatus[];
   readonly extract: (repoRoot: string) => Promise<ExtractionOutput>;
-  readonly check: (repoRoot: string, opts?: { readonly allowRemoval?: boolean }) => Promise<CheckResult>;
+  readonly check: (
+    repoRoot: string,
+    opts?: { readonly allowRemoval?: boolean; readonly strictDrift?: boolean },
+  ) => Promise<CheckResult>;
   readonly sync: (repoRoot: string) => Promise<{ readonly sqlPath: string; readonly dbPath: string; readonly counts: RegistryCounts }>;
   readonly query: (repoRoot: string, term: string) => Promise<readonly FeatureRecord[]>;
   readonly checkDup: (repoRoot: string, description: string) => Promise<readonly DuplicateCandidate[]>;

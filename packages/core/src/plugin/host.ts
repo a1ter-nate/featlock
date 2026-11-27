@@ -272,8 +272,10 @@ async function activatePlugins(
   for (const entry of activeEntries) await mountPluginSlot(domains, opts, entry.plugin, entry.source);
 }
 
-async function runExtract(domains: HostDomains, repoDir: string): Promise<ExtractionOutput> {
-  const scanCtx = discoverRepo(repoDir);
+async function runExtractWithScan(
+  domains: HostDomains,
+  scanCtx: ReturnType<typeof discoverRepo>,
+): Promise<ExtractionOutput> {
   const featuresMap = new Map<string, FeatureRecord>();
   const testsMap = new Map<string, FeatureTestLink>();
   const invariantsMap = new Map<string, InvariantRecord>();
@@ -294,14 +296,19 @@ async function runExtract(domains: HostDomains, repoDir: string): Promise<Extrac
   };
 }
 
+async function runExtract(domains: HostDomains, repoDir: string): Promise<ExtractionOutput> {
+  return await runExtractWithScan(domains, discoverRepo(repoDir));
+}
+
 async function runCheck(
   domains: HostDomains,
   repoDir: string,
-  checkOpts?: { readonly allowRemoval?: boolean },
+  checkOpts?: { readonly allowRemoval?: boolean; readonly strictDrift?: boolean },
 ): Promise<CheckResult> {
   if (!repoDir) throw new Error("repoDir is required for featlock check.");
   const scanCtx = discoverRepo(repoDir);
   const registry = Registry.readRepo(scanCtx.repoRoot);
+  const liveExtraction = await runExtractWithScan(domains, scanCtx);
   const ctx: CheckContext = {
     repoRoot: scanCtx.repoRoot,
     registryPath: path.join(scanCtx.repoRoot, REGISTRY_SQL_REL),
@@ -309,6 +316,8 @@ async function runCheck(
     previousRegistry: Registry.readHead(scanCtx.repoRoot),
     stagedFiles: listStagedFiles(scanCtx.repoRoot),
     allowRemoval: checkOpts?.allowRemoval ?? (process.env.ALLOW_FEATURE_REMOVAL === "1"),
+    strictDrift: checkOpts?.strictDrift ?? false,
+    liveExtraction,
     files: scanCtx.files,
   };
 

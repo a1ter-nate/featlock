@@ -35,6 +35,8 @@ CREATE TABLE IF NOT EXISTS invariants (
   confidence REAL NOT NULL DEFAULT 1.0,
   source TEXT NOT NULL,
   guard_ref TEXT,
+  guard_anchor TEXT,
+  root_test_path TEXT,
   status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','deprecated','removed'))
 );
 
@@ -94,7 +96,7 @@ export function serializeRegistrySql(snapshot: RegistrySnapshot): string {
   const sortedInvariants = snapshot.invariants.toSorted((a, b) => a.id.localeCompare(b.id));
   for (const inv of sortedInvariants) {
     lines.push(
-      `INSERT OR REPLACE INTO invariants (id, feature_id, kind, statement, file, line, confidence, source, guard_ref, status) VALUES (${sqlQuote(inv.id)}, ${sqlQuote(inv.featureId)}, ${sqlQuote(inv.kind)}, ${sqlQuote(inv.statement)}, ${sqlQuote(inv.file)}, ${Math.max(1, Math.floor(inv.line))}, ${Number(inv.confidence.toFixed(3))}, ${sqlQuote(inv.source)}, ${sqlQuote(inv.guardRef)}, ${sqlQuote(inv.status)});`,
+      `INSERT OR REPLACE INTO invariants (id, feature_id, kind, statement, file, line, confidence, source, guard_ref, guard_anchor, root_test_path, status) VALUES (${sqlQuote(inv.id)}, ${sqlQuote(inv.featureId)}, ${sqlQuote(inv.kind)}, ${sqlQuote(inv.statement)}, ${sqlQuote(inv.file)}, ${Math.max(1, Math.floor(inv.line))}, ${Number(inv.confidence.toFixed(3))}, ${sqlQuote(inv.source)}, ${sqlQuote(inv.guardRef)}, ${sqlQuote(inv.guardAnchor)}, ${sqlQuote(inv.rootTestPath)}, ${sqlQuote(inv.status)});`,
     );
   }
   for (const log of snapshot.auditLog) {
@@ -105,8 +107,17 @@ export function serializeRegistrySql(snapshot: RegistrySnapshot): string {
   return `${lines.join("\n")}\n`;
 }
 
+function ensureInvariantColumns(db: Database): void {
+  const cols = new Set(
+    (db.query("PRAGMA table_info(invariants)").all() as Array<{ name: string }>).map((c) => c.name),
+  );
+  if (!cols.has("guard_anchor")) db.exec("ALTER TABLE invariants ADD COLUMN guard_anchor TEXT;");
+  if (!cols.has("root_test_path")) db.exec("ALTER TABLE invariants ADD COLUMN root_test_path TEXT;");
+}
+
 export function readSnapshotFromDb(db: Database): RegistrySnapshot {
   if (!db) throw new Error("SQLite Database instance is required.");
+  ensureInvariantColumns(db);
   const fRows = db
     .query("SELECT id, area, name, summary, acceptance_criteria, status, source, adr_ref, removal_reason FROM features ORDER BY id")
     .all() as Array<Record<string, unknown>>;
@@ -114,7 +125,7 @@ export function readSnapshotFromDb(db: Database): RegistrySnapshot {
     .query("SELECT feature_id, test_path, test_pattern, rung FROM feature_tests ORDER BY feature_id, test_path, test_pattern")
     .all() as Array<Record<string, unknown>>;
   const iRows = db
-    .query("SELECT id, feature_id, kind, statement, file, line, confidence, source, guard_ref, status FROM invariants ORDER BY id")
+    .query("SELECT id, feature_id, kind, statement, file, line, confidence, source, guard_ref, guard_anchor, root_test_path, status FROM invariants ORDER BY id")
     .all() as Array<Record<string, unknown>>;
   const aRows = db
     .query("SELECT feature_id, action, actor, summary, commit_sha FROM feature_audit_log ORDER BY seq")
@@ -148,6 +159,8 @@ export function readSnapshotFromDb(db: Database): RegistrySnapshot {
       confidence: Number(r.confidence ?? 1),
       source: String(r.source ?? "ast"),
       guardRef: typeof r.guard_ref === "string" ? r.guard_ref : undefined,
+      guardAnchor: typeof r.guard_anchor === "string" ? r.guard_anchor : undefined,
+      rootTestPath: typeof r.root_test_path === "string" ? r.root_test_path : undefined,
       status: r.status === "deprecated" || r.status === "removed" ? r.status : "active",
     })),
     auditLog: aRows.map((r) => ({

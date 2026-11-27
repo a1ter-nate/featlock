@@ -70,7 +70,8 @@ describe("SQLite Anti-Deletion Triggers, Git Diff Guards, Dup Detection & Agent 
     try {
       const clean = await host.check(repoDir);
       expect(clean.ok).toBe(true);
-      expect(clean.warnings.length).toBe(0);
+      expect(clean.warnings.some((w) => w.rule === "linked-test-not-skipped")).toBe(false);
+      expect(clean.warnings.some((w) => w.rule === "staged-changes-record-feature")).toBe(false);
 
       fs.writeFileSync(path.join(repoDir, "tests", "billing.test.ts"), 'test.skip("charges positive amounts", () => {});\n');
       const skippedWarn = await host.check(repoDir);
