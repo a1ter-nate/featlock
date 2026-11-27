@@ -1,0 +1,12 @@
+{
+  "name": "@featlock/plugin-demo-toggle",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Standalone reference test plugin proving easy ON/OFF toggle behavior across extractors, invariants, guards, and CLI commands.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "peerDependencies": {
+    "@featlock/plugin": "^0.1.0"
+  }
+}
