@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "rung": "R6",
   "command": "bunx vstack big-o .verification/perf-samples.json --fail",
-  "commitSha": "baead205b1e79c8b4a591c33d11749635d6ac526",
-  "treeHash": "aa0de9896d9f31848a1315c1c8cd02bdc04c772e37c7ee4bdc0a972aca45d8fe",
+  "commitSha": "6f9c0e608bcca33470bbf5f8a306cf04ee0c6d6e",
+  "treeHash": "6b1d826026e6ad4323c18fa7a813e6f81728ed97717de416b06acf91102867f3",
   "exitCode": 0,
-  "durationMs": 79,
+  "durationMs": 83,
   "metrics": {
     "perfPassed": true
   },
-  "timestamp": "2026-11-27T22:29:25.320Z",
-  "digest": "hmac:14e7363ef9b53323d449f6516ce48f15a3a6428b57ce5f19ebb129e377d1c14f"
+  "timestamp": "2026-11-27T22:32:21.013Z",
+  "digest": "hmac:6106fea93baf792768c7e43488ab9ee0a8fedb93f93ec16f40d0ef1aa1e2710a"
 }

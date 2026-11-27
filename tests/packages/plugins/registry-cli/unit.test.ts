@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createPluginHost } from "@featlock/core";
-import cliPlugin from "../../../packages/plugins/registry-cli/src/index.ts";
+import cliPlugin from "../../../../packages/plugins/registry-cli/src/index.ts";
 
 describe("@featlock/plugin-registry-cli unit contract", () => {
   test("registers all 10 CLI subcommands", async () => {

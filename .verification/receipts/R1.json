@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "rung": "R1",
   "command": "bunx tsc --noEmit && bun run build",
-  "commitSha": "baead205b1e79c8b4a591c33d11749635d6ac526",
-  "treeHash": "aa0de9896d9f31848a1315c1c8cd02bdc04c772e37c7ee4bdc0a972aca45d8fe",
-  "exitCode": 0,
-  "durationMs": 609,
-  "timestamp": "2026-11-27T22:29:18.528Z",
-  "digest": "hmac:04e61e13fc5bd6505fd7cadb37d5282f32860959bb682b8ee1023d74af1840a9"
+  "commitSha": "6f9c0e608bcca33470bbf5f8a306cf04ee0c6d6e",
+  "treeHash": "6b1d826026e6ad4323c18fa7a813e6f81728ed97717de416b06acf91102867f3",
+  "exitCode": 2,
+  "durationMs": 675,
+  "timestamp": "2026-11-27T22:32:16.848Z",
+  "digest": "hmac:e5d8c3b53f3b9f27d9b19fbd562b306ef3eed987c9295b2ecdca534e9314f6f3"
 }

@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import fc from "fast-check";
 import { createPluginHost } from "@featlock/core";
-import veristackPlugin from "../../../packages/plugins/veristack-bridge/src/index.ts";
+import veristackPlugin from "../../../../packages/plugins/veristack-bridge/src/index.ts";
 
 class ScanPlanCmd implements fc.AsyncCommand<{ expected: number }, { host: Awaited<ReturnType<typeof createPluginHost>> }> {
   constructor(readonly controlId: string) {}

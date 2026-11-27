@@ -2,60 +2,14 @@
   "schemaVersion": 1,
   "rung": "R2",
   "command": "bun test --timeout 30000 ./tests/",
-  "commitSha": "baead205b1e79c8b4a591c33d11749635d6ac526",
-  "treeHash": "aa0de9896d9f31848a1315c1c8cd02bdc04c772e37c7ee4bdc0a972aca45d8fe",
+  "commitSha": "6f9c0e608bcca33470bbf5f8a306cf04ee0c6d6e",
+  "treeHash": "6b1d826026e6ad4323c18fa7a813e6f81728ed97717de416b06acf91102867f3",
   "exitCode": 1,
-  "durationMs": 783,
+  "durationMs": 816,
   "metrics": {
-    "testsPassed": 31,
-    "testsFailed": 0
+    "testsPassed": 36,
+    "testsFailed": 15
   },
-  "canary": {
-    "totalMutants": 12,
-    "killedMutants": 7,
-    "survivedMutants": 5,
-    "invalidKills": 0,
-    "killRate": 0.5833,
-    "minKillRate": 0.75,
-    "passed": false,
-    "survivors": [
-      {
-        "file": "packages/plugins/anti-deletion-guard/src/index.ts",
-        "line": 140,
-        "operator": "cond -> !(cond)",
-        "original": "ctx.stagedFiles.length === 0",
-        "mutated": "!(ctx.stagedFiles.length === 0)"
-      },
-      {
-        "file": "packages/plugins/ast-scanner/src/polyglot.ts",
-        "line": 90,
-        "operator": "cond -> !(cond)",
-        "original": "file.ext === \".cs\"",
-        "mutated": "!(file.ext === \".cs\")"
-      },
-      {
-        "file": "packages/plugins/anti-deletion-guard/src/index.ts",
-        "line": 40,
-        "operator": "cond -> !(cond)",
-        "original": "SKIPPED_TEST_RE.test(content)",
-        "mutated": "!(SKIPPED_TEST_RE.test(content))"
-      },
-      {
-        "file": "packages/plugins/ast-scanner/src/polyglot.ts",
-        "line": 177,
-        "operator": "cond -> !(cond)",
-        "original": "/^if\\s*\\([^)]{2,140}\\)/.test(text) && /\\bthrow\\s+new\\s+[A-Z]",
-        "mutated": "!(/^if\\s*\\([^)]{2,140}\\)/.test(text) && /\\bthrow\\s+new\\s+[A-"
-      },
-      {
-        "file": "packages/core/src/db/query.ts",
-        "line": 50,
-        "operator": "cond -> !(cond)",
-        "original": "unionSize > 0",
-        "mutated": "!(unionSize > 0)"
-      }
-    ]
-  },
-  "timestamp": "2026-11-27T22:29:22.370Z",
-  "digest": "hmac:b700260ed82ae5236a89850bc2af1463c87f51eab70dded2943083e80c5dc649"
+  "timestamp": "2026-11-27T22:32:17.713Z",
+  "digest": "hmac:aed365cbc356d5176b9dd08960c4e462f230c5cad7cd9402f34fb9c1c6ea4b13"
 }

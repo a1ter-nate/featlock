@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import fc from "fast-check";
 import { createPluginHost } from "@featlock/core";
-import harnessesPlugin from "../../../packages/plugins/harnesses/src/index.ts";
+import harnessesPlugin from "../../../../packages/plugins/harnesses/src/index.ts";
 
 class ToggleHarnessCmd implements fc.AsyncCommand<{ installed: boolean }, { repoRoot: string; host: Awaited<ReturnType<typeof createPluginHost>> }> {
   constructor(readonly turnOn: boolean) {}

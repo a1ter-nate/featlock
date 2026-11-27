@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import fc from "fast-check";
 import { createPluginHost } from "@featlock/core";
-import passesPlugin from "../../../packages/plugins/invariant-passes/src/index.ts";
+import passesPlugin from "../../../../packages/plugins/invariant-passes/src/index.ts";
 
 class BuildPassesCmd implements fc.AsyncCommand<{ expectedCount: number }, { host: Awaited<ReturnType<typeof createPluginHost>> }> {
   check(): boolean { return true; }

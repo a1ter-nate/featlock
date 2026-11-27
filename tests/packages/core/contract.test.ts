@@ -12,14 +12,18 @@ class AddKeyCmd implements fc.Command<Set<string>, ReturnType<typeof State.creat
   }
 }
 
+const createCoreMbtState = () => ({
+  model: new Set<string>(),
+  real: State.createKeyedDomain<{ readonly id: string }>("core-mbt"),
+});
+
 describe("@featlock/core MBT contract", () => {
   test("State.createKeyedDomain preserves unique keys across arbitrary command sequences", () => {
     fc.assert(
       fc.property(
         fc.commands([fc.constantFrom("a", "b", "c", "d").map((id) => new AddKeyCmd(id))], { maxCommands: 10 }),
         (cmds) => {
-          const setup = () => ({ model: new Set<string>(), real: State.createKeyedDomain<{ readonly id: string }>("core-mbt") });
-          fc.modelRun(setup, cmds);
+          fc.modelRun(createCoreMbtState, cmds);
         },
       ),
       { numRuns: 20 },

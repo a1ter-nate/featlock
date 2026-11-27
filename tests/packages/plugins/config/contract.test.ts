@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import fc from "fast-check";
 import { createPluginHost } from "@featlock/core";
-import configPlugin from "../../../packages/plugins/config/src/index.ts";
+import configPlugin from "../../../../packages/plugins/config/src/index.ts";
 
 class FormatReportCmd implements fc.AsyncCommand<{ ok: boolean }, { host: Awaited<ReturnType<typeof createPluginHost>> }> {
   constructor(readonly ok: boolean) {}
