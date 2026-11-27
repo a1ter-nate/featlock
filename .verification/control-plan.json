@@ -30,7 +30,7 @@
         "packages/plugins/anti-deletion-guard/src/index.ts"
       ],
       "syncCommit": "5bb59ed749c8e11d03cc9f36f95812a318905499",
-      "contentHash": "c8098000a8e62a5aa78925ec45fb6ce57ee3c28672a67e7a2dd920b7f9bfcddc",
+      "contentHash": "74290fbfb87ffdfe02576769162d814e1e4eeb47f2d1dad8bdc6540c3d005d98",
       "bounds": "All reachable feature lifecycle states (active, deprecated, removed) and guarded plugin protection"
     }
   ]

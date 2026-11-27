@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { Plugin, type CheckContext, type GuardViolation } from "@featlock/plugin";
 
-const SKIPPED_TEST_RE = /\b(?:test|it|describe)\.(?:skip|todo)\s*\(/;
+const SKIPPED_TEST_RE = /^\s*(?:test|it|describe)\.(?:skip|todo)\s*\(/m;
 
 function checkActiveFeatureCoverage(ctx: CheckContext): GuardViolation[] {
   if (!ctx.repoRoot) throw new Error("CheckContext.repoRoot is required.");
