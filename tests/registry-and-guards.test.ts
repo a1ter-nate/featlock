@@ -135,6 +135,28 @@ describe("SQLite Anti-Deletion Triggers, Git Diff Guards, Dup Detection & Agent 
       expect(approved.ok).toBe(true);
       expect(approved.warnings.some((w) => w.rule === "loud-feature-removal-warning")).toBe(true);
 
+      Registry.writeSql(repoDir, {
+        features: [
+          {
+            id: "feat.billing.charge",
+            area: "billing",
+            name: "Billing charge processor",
+            summary: "Retired",
+            acceptanceCriteria: "Retired",
+            status: "removed",
+            source: "manual",
+            adrRef: "ADR-007",
+            removalReason: "   ",
+          },
+        ],
+        tests: [],
+        invariants: [],
+        auditLog: [],
+      });
+      const missingReason = await host.check(repoDir, { allowRemoval: true });
+      expect(missingReason.ok).toBe(false);
+      expect(missingReason.violations.some((v) => v.rule === "feature-removal-requires-adr")).toBe(true);
+
       execFileSync("git", ["checkout", "--", "features/registry.sql"], { cwd: repoDir, stdio: "ignore" });
       const improved = Registry.recordImprovement({
         repoRoot: repoDir,

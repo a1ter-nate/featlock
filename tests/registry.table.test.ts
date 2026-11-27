@@ -102,4 +102,19 @@ describe("Registry Query, Duplicate & SQL Serialization Tables", () => {
     expect(Registry.count(roundTripped)).toEqual(Registry.count(quoted));
     expect(roundTripped.features.find((f) => f.id === "feat.quote.escape")?.summary).toBe("Handles O'Brien's input safely");
   });
+
+  test("findDuplicates sorts higher score first and breaks ties alphabetically by featureId", () => {
+    const tieSnap: RegistrySnapshot = {
+      features: [
+        { id: "feat.z-pay", area: "pay", name: "Payment retry", summary: "Payment retry queue", acceptanceCriteria: "ok", status: "active", source: "manual" },
+        { id: "feat.a-pay", area: "pay", name: "Payment retry", summary: "Payment retry queue", acceptanceCriteria: "ok", status: "active", source: "manual" },
+        { id: "feat.m-pay", area: "pay", name: "Payment retry ledger sync", summary: "Payment retry ledger sync worker", acceptanceCriteria: "ok", status: "active", source: "manual" },
+      ],
+      tests: [],
+      invariants: [],
+      auditLog: [],
+    };
+    const ranked = Registry.findDuplicates(tieSnap, "payment retry ledger sync");
+    expect(ranked.map((r) => r.featureId)).toEqual(["feat.m-pay", "feat.a-pay", "feat.z-pay"]);
+  });
 });
