@@ -21,5 +21,17 @@
       "reqId": "REQ-FLK-GUARD-01"
     }
   ],
-  "formalChecks": []
+  "formalChecks": [
+    {
+      "id": "FLK-FM-001",
+      "specFile": ".verification/formal/featlock_guards.qnt",
+      "coveredPaths": [
+        "packages/core/src/db/schema.ts",
+        "packages/plugins/anti-deletion-guard/src/index.ts"
+      ],
+      "syncCommit": "5bb59ed749c8e11d03cc9f36f95812a318905499",
+      "contentHash": "c8098000a8e62a5aa78925ec45fb6ce57ee3c28672a67e7a2dd920b7f9bfcddc",
+      "bounds": "All reachable feature lifecycle states (active, deprecated, removed) and guarded plugin protection"
+    }
+  ]
 }

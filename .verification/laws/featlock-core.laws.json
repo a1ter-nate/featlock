@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "title": "FeatLock Core Anti-Deletion, Replayable State & Plugin Boundary Laws",
+  "laws": [
+    {
+      "id": "featlock-sqlite-anti-deletion-triggers",
+      "invariant": "SQLite BEFORE DELETE triggers abort direct deletion of active features, active feature_tests, and active invariants (modeled in .verification/formal/featlock_guards.qnt).",
+      "witnessRef": "tests/registry-and-guards.test.ts"
+    },
+    {
+      "id": "featlock-adr-gated-removal-monotonicity",
+      "invariant": "Transitioning an active feature to status='removed' fails closed unless adr_ref, removal_reason, and ALLOW_FEATURE_REMOVAL=1 are all present.",
+      "witnessRef": "tests/formal-proof.test.ts"
+    },
+    {
+      "id": "featlock-guarded-plugin-unremovable",
+      "invariant": "Guarded plugins (featlock.guard.anti-deletion) cannot be disabled by plugin remove selectors or wildcards, and crashing sibling plugins are fault-isolated.",
+      "witnessRef": "tests/plugin-architecture/runtime.test.ts"
+    },
+    {
+      "id": "featlock-registry-sql-roundtrip-determinism",
+      "invariant": "Serializing any valid RegistrySnapshot to SQL and loading it back into SQLite preserves all features, tests, invariants, and audit entries deterministically.",
+      "witnessRef": "tests/state-and-registry.pbt.test.ts"
+    }
+  ]
+}

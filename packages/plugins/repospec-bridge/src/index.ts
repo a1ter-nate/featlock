@@ -43,6 +43,7 @@ function findRepoSpecJson(repoRoot: string): string | null {
 }
 
 function extractFromSqlite(dbPath: string): ExtractionOutput {
+  if (!dbPath) throw new Error("RepoSpec SQLite path is required.");
   const db = new Database(dbPath, { readonly: true });
   const features: FeatureRecord[] = [];
   const tests: FeatureTestLink[] = [];
@@ -98,6 +99,7 @@ function extractFromSqlite(dbPath: string): ExtractionOutput {
 }
 
 function extractFromJson(jsonPath: string): ExtractionOutput {
+  if (!jsonPath) throw new Error("RepoSpec JSON path is required.");
   const raw = JSON.parse(fs.readFileSync(jsonPath, "utf8")) as {
     surfaces?: { endpoints?: Array<{ method?: string; path?: string; file?: string }> };
     invariants?: Array<{ id: string; name?: string; statement?: string }>;

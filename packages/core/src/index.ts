@@ -1,18 +1,4 @@
-export {
-  countRegistry,
-  findDuplicateFeatures,
-  loadSnapshotFromSql,
-  materializeRegistryDb,
-  queryRegistryFeatures,
-  readHeadRegistry,
-  readRepoRegistry,
-  recordFeatureImprovement,
-  recordNewFeature,
-  REGISTRY_DB_REL,
-  REGISTRY_SQL_REL,
-  serializeRegistrySql,
-  writeRegistrySql,
-} from "./db/registry.ts";
+export { Registry, REGISTRY_DB_REL, REGISTRY_SQL_REL, type RecordImprovementInput, type RecordNewFeatureInput } from "./db/registry.ts";
 export { discoverRepo, listStagedFiles } from "./discover.ts";
 export {
   createPluginHost,
@@ -21,4 +7,4 @@ export {
   type PluginHostOptions,
   type PluginOperation,
 } from "./plugin/host.ts";
-export { batch, createKeyedDomainState, createState, State, type StateInstance } from "./state.ts";
+export { State, type StateInstance } from "./state.ts";

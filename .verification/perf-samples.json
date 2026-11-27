@@ -1,0 +1,21 @@
+{
+  "samples": [
+    {
+      "n": 40,
+      "timeMs": 0.95
+    },
+    {
+      "n": 80,
+      "timeMs": 1.98
+    },
+    {
+      "n": 160,
+      "timeMs": 3.03
+    },
+    {
+      "n": 320,
+      "timeMs": 5.99
+    }
+  ],
+  "maxTimeExponent": 1.65
+}

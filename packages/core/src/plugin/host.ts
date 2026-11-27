@@ -10,7 +10,6 @@ import {
   type CheckResult,
   type CommandSpec,
   type DomainTransformHandle,
-  type DuplicateCandidate,
   type ExtractionOutput,
   type ExtractorSpec,
   type FeatlockPlugin,
@@ -25,21 +24,9 @@ import {
   type InvariantScannerSpec,
   type PluginRegistration,
   type PluginStatus,
-  type RegistryCounts,
   type ReporterSpec,
 } from "@featlock/plugin";
-import {
-  countRegistry,
-  findDuplicateFeatures,
-  materializeRegistryDb,
-  queryRegistryFeatures,
-  readHeadRegistry,
-  readRepoRegistry,
-  recordFeatureImprovement,
-  recordNewFeature,
-  REGISTRY_SQL_REL,
-  writeRegistrySql,
-} from "../db/registry.ts";
+import { Registry, REGISTRY_SQL_REL } from "../db/registry.ts";
 import { discoverRepo, listStagedFiles } from "../discover.ts";
 import { State, type RegistrationGroup } from "../state.ts";
 import { getBuiltinPlugins, GUARDED_PLUGIN_IDS } from "./internal.ts";
@@ -76,6 +63,40 @@ interface ActiveSlot {
   lifecycle: SlotLifecycle;
 }
 
+interface CheckHookItem {
+  readonly id: string;
+  readonly name: "beforeCheck" | "afterCheck";
+  readonly handler: (event: CheckHookEvent) => void | Promise<void>;
+}
+
+interface HostDomains {
+  readonly extractors: ReturnType<typeof State.createKeyedDomain<ExtractorSpec>>;
+  readonly scanners: ReturnType<typeof State.createKeyedDomain<InvariantScannerSpec>>;
+  readonly guards: ReturnType<typeof State.createKeyedDomain<GuardSpec>>;
+  readonly passes: ReturnType<typeof State.createKeyedDomain<AgentPassSpec>>;
+  readonly harnesses: ReturnType<typeof State.createKeyedDomain<HarnessSpec>>;
+  readonly reporters: ReturnType<typeof State.createKeyedDomain<ReporterSpec>>;
+  readonly commands: ReturnType<typeof State.createKeyedDomain<CommandSpec>>;
+  readonly checkHooks: ReturnType<typeof State.createKeyedDomain<CheckHookItem>>;
+  readonly slots: Map<string, ActiveSlot>;
+  hookSeq: number;
+}
+
+function createHostDomains(): HostDomains {
+  return {
+    extractors: State.createKeyedDomain<ExtractorSpec>("extractor"),
+    scanners: State.createKeyedDomain<InvariantScannerSpec>("invariantScanner"),
+    guards: State.createKeyedDomain<GuardSpec>("guard"),
+    passes: State.createKeyedDomain<AgentPassSpec>("agentPass"),
+    harnesses: State.createKeyedDomain<HarnessSpec>("harness"),
+    reporters: State.createKeyedDomain<ReporterSpec>("reporter"),
+    commands: State.createKeyedDomain<CommandSpec>("command"),
+    checkHooks: State.createKeyedDomain<CheckHookItem>("checkHook"),
+    slots: new Map<string, ActiveSlot>(),
+    hookSeq: 0,
+  };
+}
+
 function matchesSelector(selector: string, id: string): boolean {
   if (selector === "*") return true;
   if (selector.endsWith(".*")) return id.startsWith(selector.slice(0, -1));
@@ -83,6 +104,7 @@ function matchesSelector(selector: string, id: string): boolean {
 }
 
 async function resolveExternalPlugin(target: string): Promise<FeatlockPlugin> {
+  if (!target) throw new Error("Plugin target path is required.");
   const abs = path.resolve(target);
   let entryFile = abs;
   if (fs.existsSync(abs) && fs.statSync(abs).isDirectory()) {
@@ -128,21 +150,6 @@ function makeDomainHandle<TItem extends { readonly id: string }>(
   };
 }
 
-async function syncRepo(
-  repoDir: string,
-): Promise<{ readonly sqlPath: string; readonly dbPath: string; readonly counts: RegistryCounts }> {
-  const out = materializeRegistryDb(path.resolve(repoDir));
-  return { sqlPath: out.sqlPath, dbPath: out.dbPath, counts: out.counts };
-}
-
-async function queryRepo(repoDir: string, term: string): Promise<readonly FeatureRecord[]> {
-  return queryRegistryFeatures(readRepoRegistry(path.resolve(repoDir)), term);
-}
-
-async function checkDupRepo(repoDir: string, description: string): Promise<readonly DuplicateCandidate[]> {
-  return findDuplicateFeatures(readRepoRegistry(path.resolve(repoDir)), description);
-}
-
 async function disposeSlot(slot: ActiveSlot): Promise<void> {
   for (const cleanup of slot.cleanups.toReversed()) {
     try {
@@ -154,258 +161,242 @@ async function disposeSlot(slot: ActiveSlot): Promise<void> {
   slot.cleanups.length = 0;
 }
 
-export async function createPluginHost(opts: PluginHostOptions = {}): Promise<PluginHostInstance> {
-  const extractors = State.createKeyedDomain<ExtractorSpec>("extractor");
-  const scanners = State.createKeyedDomain<InvariantScannerSpec>("invariantScanner");
-  const guards = State.createKeyedDomain<GuardSpec>("guard");
-  const passes = State.createKeyedDomain<AgentPassSpec>("agentPass");
-  const harnesses = State.createKeyedDomain<HarnessSpec>("harness");
-  const reporters = State.createKeyedDomain<ReporterSpec>("reporter");
-  const commands = State.createKeyedDomain<CommandSpec>("command");
-  const checkHooks = State.createKeyedDomain<{
-    readonly id: string;
-    readonly name: "beforeCheck" | "afterCheck";
-    readonly handler: (event: CheckHookEvent) => void | Promise<void>;
-  }>("checkHook");
+async function disposeAllSlots(domains: HostDomains): Promise<void> {
+  for (const slot of Array.from(domains.slots.values()).toReversed()) {
+    await disposeSlot(slot);
+  }
+  domains.slots.clear();
+}
 
-  const slots = new Map<string, ActiveSlot>();
-  let hookSeq = 0;
-
-  const disposeAll = async (): Promise<void> => {
-    for (const slot of Array.from(slots.values()).toReversed()) {
-      await disposeSlot(slot);
-    }
-    slots.clear();
-  };
-
-  const mountPlugin = async (plugin: FeatlockPlugin, source: PluginStatus["source"]): Promise<void> => {
-    const guarded = plugin.guarded === true || GUARDED_PLUGIN_IDS.has(plugin.id);
-    const cleanups: Array<() => Promise<void> | void> = [];
-    const slot: ActiveSlot = {
-      id: plugin.id,
-      source,
-      guarded,
-      cleanups,
-      lifecycle: { status: "active", group: null },
-    };
-    slots.set(plugin.id, slot);
-
-    const ctx: FeatlockPluginContext = {
-      options: opts.optionsByPlugin?.[plugin.id] ?? {},
-      extractor: makeDomainHandle(extractors, cleanups),
-      invariantScanner: makeDomainHandle(scanners, cleanups),
-      guard: makeDomainHandle(guards, cleanups),
-      agentPass: makeDomainHandle(passes, cleanups),
-      harness: makeDomainHandle(harnesses, cleanups),
-      reporter: makeDomainHandle(reporters, cleanups),
-      command: makeDomainHandle(commands, cleanups),
-      check: {
-        hook: async (name, handler): Promise<PluginRegistration> => {
-          const id = `${plugin.id}:hook:${++hookSeq}`;
-          const reg = checkHooks.transform((ed) => ed.add({ id, name, handler }));
-          cleanups.push(reg.dispose);
-          return reg;
-        },
+function buildPluginContext(
+  domains: HostDomains,
+  opts: PluginHostOptions,
+  plugin: FeatlockPlugin,
+  cleanups: Array<() => Promise<void> | void>,
+): FeatlockPluginContext {
+  return {
+    options: opts.optionsByPlugin?.[plugin.id] ?? {},
+    extractor: makeDomainHandle(domains.extractors, cleanups),
+    invariantScanner: makeDomainHandle(domains.scanners, cleanups),
+    guard: makeDomainHandle(domains.guards, cleanups),
+    agentPass: makeDomainHandle(domains.passes, cleanups),
+    harness: makeDomainHandle(domains.harnesses, cleanups),
+    reporter: makeDomainHandle(domains.reporters, cleanups),
+    command: makeDomainHandle(domains.commands, cleanups),
+    check: {
+      hook: async (name, handler): Promise<PluginRegistration> => {
+        const id = `${plugin.id}:hook:${++domains.hookSeq}`;
+        const reg = domains.checkHooks.transform((ed) => ed.add({ id, name, handler }));
+        cleanups.push(reg.dispose);
+        return reg;
       },
-    };
+    },
+  };
+}
 
+async function mountPluginSlot(
+  domains: HostDomains,
+  opts: PluginHostOptions,
+  plugin: FeatlockPlugin,
+  source: PluginStatus["source"],
+): Promise<void> {
+  if (!plugin.id) throw new Error("Plugin id is required.");
+  const guarded = plugin.guarded === true || GUARDED_PLUGIN_IDS.has(plugin.id);
+  const cleanups: Array<() => Promise<void> | void> = [];
+  const slot: ActiveSlot = { id: plugin.id, source, guarded, cleanups, lifecycle: { status: "active", group: null } };
+  domains.slots.set(plugin.id, slot);
+  const ctx = buildPluginContext(domains, opts, plugin, cleanups);
+
+  try {
+    const { group, result } = await State.groupAsync(
+      (failure) => {
+        slot.lifecycle = {
+          status: "failed",
+          error: failure.cause instanceof Error ? failure.cause.message : String(failure.cause),
+        };
+      },
+      async () => await plugin.setup(ctx),
+    );
+    if (typeof result === "function") cleanups.push(result);
+    if (slot.lifecycle.status === "active") slot.lifecycle = { status: "active", group };
+    domains.extractors.get();
+    domains.scanners.get();
+    domains.guards.get();
+    domains.passes.get();
+    domains.harnesses.get();
+    domains.reporters.get();
+    domains.commands.get();
+    domains.checkHooks.get();
+  } catch (err) {
+    slot.lifecycle = { status: "failed", error: err instanceof Error ? err.message : String(err) };
+    await disposeSlot(slot);
+  }
+}
+
+async function activatePlugins(
+  domains: HostDomains,
+  opts: PluginHostOptions,
+  extraPlugins: readonly unknown[],
+  operations: readonly PluginOperation[],
+): Promise<void> {
+  if (!domains) throw new Error("HostDomains instance is required.");
+  await disposeAllSlots(domains);
+  const builtins = opts.includeBuiltins === false ? { pre: [], post: [] } : getBuiltinPlugins();
+  const entries: Array<{ plugin: FeatlockPlugin; source: PluginStatus["source"] }> = [
+    ...builtins.pre.map((plugin) => ({ plugin, source: "builtin" as const })),
+    ...extraPlugins.filter(isFeatlockPlugin).map((plugin) => ({ plugin, source: "inline" as const })),
+  ];
+
+  for (const op of operations) {
+    if (op.type !== "add" || entries.some((e) => e.plugin.id === op.target)) continue;
     try {
-      const { group, result } = await State.groupAsync(
-        (failure) => {
-          slot.lifecycle = {
-            status: "failed",
-            error: failure.cause instanceof Error ? failure.cause.message : String(failure.cause),
-          };
-        },
-        async () => await plugin.setup(ctx),
-      );
-      if (typeof result === "function") cleanups.push(result);
-      if (slot.lifecycle.status === "active") {
-        slot.lifecycle = { status: "active", group };
-      }
-      extractors.get();
-      scanners.get();
-      guards.get();
-      passes.get();
-      harnesses.get();
-      reporters.get();
-      commands.get();
-      checkHooks.get();
+      entries.push({ plugin: await resolveExternalPlugin(op.target), source: "package" });
     } catch (err) {
-      slot.lifecycle = { status: "failed", error: err instanceof Error ? err.message : String(err) };
-      await disposeSlot(slot);
+      domains.slots.set(op.target, {
+        id: op.target,
+        source: "package",
+        guarded: false,
+        cleanups: [],
+        lifecycle: { status: "failed", error: err instanceof Error ? err.message : String(err) },
+      });
     }
+  }
+
+  entries.push(...builtins.post.map((plugin) => ({ plugin, source: "builtin" as const })));
+  const removedSelectors = operations.filter((o) => o.type === "remove").map((o) => o.target);
+  const activeEntries = entries.filter((entry) => {
+    const isGuarded = entry.plugin.guarded === true || GUARDED_PLUGIN_IDS.has(entry.plugin.id);
+    if (isGuarded) return true;
+    return !removedSelectors.some((sel) => matchesSelector(sel, entry.plugin.id));
+  });
+  for (const entry of activeEntries) await mountPluginSlot(domains, opts, entry.plugin, entry.source);
+}
+
+async function runExtract(domains: HostDomains, repoDir: string): Promise<ExtractionOutput> {
+  const scanCtx = discoverRepo(repoDir);
+  const featuresMap = new Map<string, FeatureRecord>();
+  const testsMap = new Map<string, FeatureTestLink>();
+  const invariantsMap = new Map<string, InvariantRecord>();
+
+  for (const ext of domains.extractors.get()) {
+    const out = await ext.extract(scanCtx);
+    for (const f of out.features) featuresMap.set(f.id, f);
+    for (const t of out.tests) testsMap.set(`${t.featureId}|${t.testPath}|${t.testPattern}`, t);
+    for (const inv of out.invariants) invariantsMap.set(inv.id, inv);
+  }
+  for (const scanner of domains.scanners.get()) {
+    for (const inv of await scanner.scan(scanCtx)) invariantsMap.set(inv.id, inv);
+  }
+  return {
+    features: Array.from(featuresMap.values()).toSorted((a, b) => a.id.localeCompare(b.id)),
+    tests: Array.from(testsMap.values()),
+    invariants: Array.from(invariantsMap.values()).toSorted((a, b) => a.id.localeCompare(b.id)),
+  };
+}
+
+async function runCheck(
+  domains: HostDomains,
+  repoDir: string,
+  checkOpts?: { readonly allowRemoval?: boolean },
+): Promise<CheckResult> {
+  if (!repoDir) throw new Error("repoDir is required for featlock check.");
+  const scanCtx = discoverRepo(repoDir);
+  const registry = Registry.readRepo(scanCtx.repoRoot);
+  const ctx: CheckContext = {
+    repoRoot: scanCtx.repoRoot,
+    registryPath: path.join(scanCtx.repoRoot, REGISTRY_SQL_REL),
+    registry,
+    previousRegistry: Registry.readHead(scanCtx.repoRoot),
+    stagedFiles: listStagedFiles(scanCtx.repoRoot),
+    allowRemoval: checkOpts?.allowRemoval ?? (process.env.ALLOW_FEATURE_REMOVAL === "1"),
+    files: scanCtx.files,
   };
 
-  const activate = async (
-    extraPlugins: readonly unknown[],
-    operations: readonly PluginOperation[] = [],
-  ): Promise<void> => {
-    await disposeAll();
-    const builtins = opts.includeBuiltins === false ? { pre: [], post: [] } : getBuiltinPlugins();
-    const entries: Array<{ plugin: FeatlockPlugin; source: PluginStatus["source"] }> = [
-      ...builtins.pre.map((plugin) => ({ plugin, source: "builtin" as const })),
-      ...extraPlugins.filter(isFeatlockPlugin).map((plugin) => ({ plugin, source: "inline" as const })),
-    ];
+  const violations: GuardViolation[] = [];
+  const beforeEvent: CheckHookEvent = { repoRoot: scanCtx.repoRoot, violations };
+  for (const h of domains.checkHooks.get().filter((x) => x.name === "beforeCheck")) await h.handler(beforeEvent);
+  for (const guard of domains.guards.get()) violations.push(...(await guard.evaluate(ctx)));
+  const afterEvent: CheckHookEvent = { repoRoot: scanCtx.repoRoot, violations };
+  for (const h of domains.checkHooks.get().filter((x) => x.name === "afterCheck")) await h.handler(afterEvent);
 
-    for (const op of operations) {
-      if (op.type !== "add") continue;
-      if (entries.some((e) => e.plugin.id === op.target)) continue;
-      try {
-        const loaded = await resolveExternalPlugin(op.target);
-        entries.push({ plugin: loaded, source: "package" });
-      } catch (err) {
-        slots.set(op.target, {
-          id: op.target,
-          source: "package",
-          guarded: false,
-          cleanups: [],
-          lifecycle: { status: "failed", error: err instanceof Error ? err.message : String(err) },
-        });
-      }
-    }
+  const errors = violations.filter((v) => v.severity === "error");
+  const warnings = violations.filter((v) => v.severity === "warn");
+  return { ok: errors.length === 0, violations: errors, warnings, counts: Registry.count(registry) };
+}
 
-    entries.push(...builtins.post.map((plugin) => ({ plugin, source: "builtin" as const })));
-    const removedSelectors = operations.filter((o) => o.type === "remove").map((o) => o.target);
-    const activeEntries = entries.filter((entry) => {
-      const isGuarded = entry.plugin.guarded === true || GUARDED_PLUGIN_IDS.has(entry.plugin.id);
-      if (isGuarded) return true;
-      return !removedSelectors.some((sel) => matchesSelector(sel, entry.plugin.id));
-    });
+async function runBuildAgentPasses(domains: HostDomains, repoDir: string): Promise<readonly AgentPassPacket[]> {
+  const scanCtx = discoverRepo(repoDir);
+  const registry = Registry.readRepo(scanCtx.repoRoot);
+  const packets: AgentPassPacket[] = [];
+  for (const p of domains.passes.get().toSorted((a, b) => a.order - b.order)) {
+    packets.push(await p.buildPacket(scanCtx, registry));
+  }
+  return packets;
+}
 
-    for (const entry of activeEntries) {
-      await mountPlugin(entry.plugin, entry.source);
-    }
-  };
+async function runCliCommand(
+  domains: HostDomains,
+  facade: HostApiFacade,
+  argv: readonly string[],
+  repoRoot: string,
+): Promise<number> {
+  const cmdName = argv[0];
+  if (!cmdName || cmdName === "-h" || cmdName === "--help") {
+    console.log("featlock — Tight-core SQLite feature, test & invariant guard\n");
+    for (const cmd of domains.commands.get()) console.log(`  featlock ${cmd.id.padEnd(20)} ${cmd.description}`);
+    return 0;
+  }
+  const found = domains.commands.get().find((c) => c.id === cmdName);
+  if (!found) {
+    console.error(`Unknown featlock command: ${cmdName}`);
+    return 2;
+  }
+  const rest = argv.slice(1);
+  return await found.run({ repoRoot: path.resolve(repoRoot), args: rest, asJson: rest.includes("--json"), host: facade });
+}
 
+export async function createPluginHost(opts: PluginHostOptions = {}): Promise<PluginHostInstance> {
+  if (!opts) throw new Error("PluginHostOptions must be defined.");
+  const domains = createHostDomains();
   const list = (): readonly PluginStatus[] =>
-    Array.from(slots.values()).map((s) => ({
+    Array.from(domains.slots.values()).map((s) => ({
       id: s.id,
       source: s.source,
-      state:
-        s.lifecycle.status === "active"
-          ? { status: "active" }
-          : { status: "failed", error: s.lifecycle.error },
+      state: s.lifecycle.status === "active" ? { status: "active" } : { status: "failed", error: s.lifecycle.error },
       guarded: s.guarded,
     }));
 
-  const extract = async (repoDir: string): Promise<ExtractionOutput> => {
-    const scanCtx = discoverRepo(repoDir);
-    const featuresMap = new Map<string, FeatureRecord>();
-    const testsMap = new Map<string, FeatureTestLink>();
-    const invariantsMap = new Map<string, InvariantRecord>();
-
-    for (const ext of extractors.get()) {
-      const out = await ext.extract(scanCtx);
-      for (const f of out.features) featuresMap.set(f.id, f);
-      for (const t of out.tests) testsMap.set(`${t.featureId}|${t.testPath}|${t.testPattern}`, t);
-      for (const inv of out.invariants) invariantsMap.set(inv.id, inv);
-    }
-    for (const scanner of scanners.get()) {
-      const found = await scanner.scan(scanCtx);
-      for (const inv of found) invariantsMap.set(inv.id, inv);
-    }
-    return {
-      features: Array.from(featuresMap.values()).toSorted((a, b) => a.id.localeCompare(b.id)),
-      tests: Array.from(testsMap.values()),
-      invariants: Array.from(invariantsMap.values()).toSorted((a, b) => a.id.localeCompare(b.id)),
-    };
-  };
-
-  const check = async (
-    repoDir: string,
-    checkOpts?: { readonly allowRemoval?: boolean },
-  ): Promise<CheckResult> => {
-    const scanCtx = discoverRepo(repoDir);
-    const registry = readRepoRegistry(scanCtx.repoRoot);
-    const previousRegistry = readHeadRegistry(scanCtx.repoRoot);
-    const ctx: CheckContext = {
-      repoRoot: scanCtx.repoRoot,
-      registryPath: path.join(scanCtx.repoRoot, REGISTRY_SQL_REL),
-      registry,
-      previousRegistry,
-      stagedFiles: listStagedFiles(scanCtx.repoRoot),
-      allowRemoval: checkOpts?.allowRemoval ?? (process.env.ALLOW_FEATURE_REMOVAL === "1"),
-      files: scanCtx.files,
-    };
-
-    const violations: GuardViolation[] = [];
-    const beforeEvent: CheckHookEvent = { repoRoot: scanCtx.repoRoot, violations };
-    for (const h of checkHooks.get().filter((x) => x.name === "beforeCheck")) await h.handler(beforeEvent);
-    for (const guard of guards.get()) {
-      violations.push(...(await guard.evaluate(ctx)));
-    }
-    const afterEvent: CheckHookEvent = { repoRoot: scanCtx.repoRoot, violations };
-    for (const h of checkHooks.get().filter((x) => x.name === "afterCheck")) await h.handler(afterEvent);
-
-    const errors = violations.filter((v) => v.severity === "error");
-    const warnings = violations.filter((v) => v.severity === "warn");
-    return { ok: errors.length === 0, violations: errors, warnings, counts: countRegistry(registry) };
-  };
-
-  const buildAgentPasses = async (repoDir: string): Promise<readonly AgentPassPacket[]> => {
-    const scanCtx = discoverRepo(repoDir);
-    const registry = readRepoRegistry(scanCtx.repoRoot);
-    const ordered = passes.get().toSorted((a, b) => a.order - b.order);
-    const packets: AgentPassPacket[] = [];
-    for (const p of ordered) {
-      packets.push(await p.buildPacket(scanCtx, registry));
-    }
-    return packets;
-  };
-
   const facade: HostApiFacade = {
     listPlugins: list,
-    extract,
-    check,
-    sync: syncRepo,
-    query: queryRepo,
-    checkDup: checkDupRepo,
-    recordNew: async (input) => recordNewFeature({ ...input, repoRoot: path.resolve(input.repoRoot) }),
-    recordImprovement: async (input) => recordFeatureImprovement({ ...input, repoRoot: path.resolve(input.repoRoot) }),
+    extract: (repoDir) => runExtract(domains, repoDir),
+    check: (repoDir, checkOpts) => runCheck(domains, repoDir, checkOpts),
+    sync: async (repoDir) => {
+      const out = Registry.materializeDb(path.resolve(repoDir));
+      return { sqlPath: out.sqlPath, dbPath: out.dbPath, counts: out.counts };
+    },
+    query: async (repoDir, term) => Registry.queryFeatures(Registry.readRepo(path.resolve(repoDir)), term),
+    checkDup: async (repoDir, description) => Registry.findDuplicates(Registry.readRepo(path.resolve(repoDir)), description),
+    recordNew: async (input) => Registry.recordNew({ ...input, repoRoot: path.resolve(input.repoRoot) }),
+    recordImprovement: async (input) => Registry.recordImprovement({ ...input, repoRoot: path.resolve(input.repoRoot) }),
     writeRegistry: async (repoDir, snapshot) => {
-      const sqlPath = writeRegistrySql(path.resolve(repoDir), snapshot);
-      materializeRegistryDb(path.resolve(repoDir));
+      const sqlPath = Registry.writeSql(path.resolve(repoDir), snapshot);
+      Registry.materializeDb(path.resolve(repoDir));
       return sqlPath;
     },
-    readRegistry: async (repoDir) => readRepoRegistry(path.resolve(repoDir)),
-    buildAgentPasses,
-    getHarnesses: () => harnesses.get(),
-    getCommands: () => commands.get(),
-    getReporters: () => reporters.get(),
+    readRegistry: async (repoDir) => Registry.readRepo(path.resolve(repoDir)),
+    buildAgentPasses: (repoDir) => runBuildAgentPasses(domains, repoDir),
+    getHarnesses: () => domains.harnesses.get(),
+    getCommands: () => domains.commands.get(),
+    getReporters: () => domains.reporters.get(),
   };
 
-  const runCli = async (argv: readonly string[], repoRoot = process.cwd()): Promise<number> => {
-    const cmdName = argv[0];
-    if (!cmdName || cmdName === "-h" || cmdName === "--help") {
-      console.log("featlock — Tight-core SQLite feature, test & invariant guard\n");
-      for (const cmd of commands.get()) {
-        console.log(`  featlock ${cmd.id.padEnd(20)} ${cmd.description}`);
-      }
-      return 0;
-    }
-    const found = commands.get().find((c) => c.id === cmdName);
-    if (!found) {
-      console.error(`Unknown featlock command: ${cmdName}`);
-      return 2;
-    }
-    const rest = argv.slice(1);
-    return await found.run({
-      repoRoot: path.resolve(repoRoot),
-      args: rest,
-      asJson: rest.includes("--json"),
-      host: facade,
-    });
-  };
-
-  await activate(opts.plugins ?? [], opts.operations ?? []);
-
+  await activatePlugins(domains, opts, opts.plugins ?? [], opts.operations ?? []);
   return {
     ...facade,
     list,
-    activate,
-    dispose: disposeAll,
-    runCli,
+    activate: (extraPlugins, operations = []) => activatePlugins(domains, opts, extraPlugins, operations),
+    dispose: () => disposeAllSlots(domains),
+    runCli: (argv, repoRoot = process.cwd()) => runCliCommand(domains, facade, argv, repoRoot),
   };
 }
 

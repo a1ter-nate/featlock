@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "archetype": "library",
+  "rungs": {
+    "R0": {
+      "command": "bunx oxlint -c .oxlintrc.json --deny-warnings src packages tests examples && bun run lint:no-comments && bun run lint:state-machines",
+      "required": true
+    },
+    "R1": {
+      "command": "bunx tsc --noEmit && bun run build",
+      "required": true
+    },
+    "R2": {
+      "command": "bun test --timeout 30000 ./tests/",
+      "required": true,
+      "canary": {
+        "enabled": true,
+        "testCommand": "bun test --timeout 30000 ./tests/registry-and-guards.test.ts ./tests/registry.table.test.ts ./tests/polyglot-calibration.test.ts ./tests/state-and-registry.pbt.test.ts",
+        "targets": [
+          "packages/core/src/db/query.ts",
+          "packages/plugins/anti-deletion-guard/src/index.ts",
+          "packages/plugins/ast-scanner/src/polyglot.ts"
+        ],
+        "maxMutants": 12,
+        "minKillRate": 0.75
+      }
+    },
+    "R3": {
+      "command": "bun test --timeout 30000 ./tests/cli.integration.test.ts ./tests/registry.mbt.test.ts ./tests/plugin-host.mbt.test.ts ./tests/plugin-architecture/",
+      "required": true
+    },
+    "R5": {
+      "command": "bunx vstack formal-sync . --fail && bunx vstack laws . --fail && bunx vstack canary . --test-cmd \"bun test --timeout 30000 ./tests/registry-and-guards.test.ts ./tests/registry.table.test.ts\" --targets packages/core/src/db/query.ts,packages/plugins/anti-deletion-guard/src/index.ts --max-mutants 6 --min-kill-rate 0.75 --fail",
+      "required": true
+    },
+    "R6": {
+      "command": "bunx vstack big-o .verification/perf-samples.json --fail",
+      "required": true
+    }
+  }
+}

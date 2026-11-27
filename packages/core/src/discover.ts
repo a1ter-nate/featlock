@@ -15,12 +15,21 @@ const SKIP_DIRS = new Set([
   "target",
   "__pycache__",
   ".venv",
+  "vendor",
+  "bin",
+  "obj",
 ]);
 
 const SOURCE_EXTS = new Set([".ts", ".tsx", ".mts", ".js", ".mjs", ".py", ".rs", ".cs", ".go", ".sql"]);
 
 function isTestPath(rel: string): boolean {
-  return /(?:^|\/)(?:tests?|__tests__|spec)\/|\.(?:test|spec)\.[cm]?[jt]sx?$|_test\.(?:py|rs|go)$|Tests?\.cs$/i.test(rel);
+  return (
+    /(?:^|\/)(?:tests?|__tests__|spec|caddytest|testmocks)\//i.test(rel) ||
+    /\.(?:test|spec)\.[cm]?[jt]sx?$/i.test(rel) ||
+    /(?:^|\/)test_[^/]+\.py$/i.test(rel) ||
+    /_test\.(?:py|rs|go)$/i.test(rel) ||
+    /Tests?\.cs$/i.test(rel)
+  );
 }
 
 export function discoverRepo(repoDir: string): ScanContext {
@@ -66,7 +75,8 @@ export function discoverRepo(repoDir: string): ScanContext {
   files.sort((a, b) => a.rel.localeCompare(b.rel));
 
   const readText = (relPath: string): string | null => {
-    if (textCache.has(relPath)) return textCache.get(relPath) ?? null;
+    const hit: string | undefined = textCache.get(relPath) ?? undefined;
+    if (textCache.has(relPath)) return hit ?? null;
     const abs = path.join(repoRoot, relPath);
     if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
       textCache.set(relPath, null);

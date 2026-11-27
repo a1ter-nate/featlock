@@ -1,0 +1,16 @@
+/.github/ @a1ter-nate
+/.verification/ @a1ter-nate
+/.verification/laws/ @a1ter-nate
+/.verification/formal/ @a1ter-nate
+/features/registry.sql @a1ter-nate
+/lefthook.yml @a1ter-nate
+/.oxlintrc.json @a1ter-nate
+/.editorconfig @a1ter-nate
+/tsconfig.json @a1ter-nate
+/package.json @a1ter-nate
+/bun.lock @a1ter-nate
+/scripts/ @a1ter-nate
+/src/ @a1ter-nate
+/packages/ @a1ter-nate
+/tests/ @a1ter-nate
+/skill/ @a1ter-nate

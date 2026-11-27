@@ -5,6 +5,7 @@ import { Plugin, type CheckContext, type GuardViolation } from "@featlock/plugin
 const SKIPPED_TEST_RE = /\b(?:test|it|describe)\.(?:skip|todo)\s*\(/;
 
 function checkActiveFeatureCoverage(ctx: CheckContext): GuardViolation[] {
+  if (!ctx.repoRoot) throw new Error("CheckContext.repoRoot is required.");
   const violations: GuardViolation[] = [];
   const activeFeatures = ctx.registry.features.filter((f) => f.status === "active");
   for (const feat of activeFeatures) {

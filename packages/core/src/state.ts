@@ -24,7 +24,7 @@ interface BatchState {
 let activeGroup: RegistrationGroup | undefined;
 let activeBatch: BatchState | undefined;
 
-export function withGroup<T>(
+function withGroup<T>(
   report: (failure: StateFailure) => void,
   fn: () => T,
 ): { readonly group: RegistrationGroup; readonly result: T } {
@@ -38,7 +38,7 @@ export function withGroup<T>(
   }
 }
 
-export async function withGroupAsync<T>(
+async function withGroupAsync<T>(
   report: (failure: StateFailure) => void,
   fn: () => Promise<T>,
 ): Promise<{ readonly group: RegistrationGroup; readonly result: T }> {
@@ -53,7 +53,7 @@ export async function withGroupAsync<T>(
   }
 }
 
-export function detachGroup(grp: RegistrationGroup, failure: StateFailure): void {
+function detachGroup(grp: RegistrationGroup, failure: StateFailure): void {
   if (grp.failed) return;
   grp.failed = true;
   const toNotify = new Set<() => void>();
@@ -66,7 +66,7 @@ export function detachGroup(grp: RegistrationGroup, failure: StateFailure): void
   for (const notify of toNotify) notify();
 }
 
-export function batch<T>(fn: () => T): T {
+function batch<T>(fn: () => T): T {
   if (activeBatch?.active) return fn();
   const prev = activeBatch;
   const current: BatchState = { active: true, pending: new Set() };
@@ -97,9 +97,10 @@ export interface StateInstance<TState, TEditor> {
   readonly revision: () => number;
 }
 
-export function createState<TState, TEditor>(
+function createState<TState, TEditor>(
   options: StateOptions<TState, TEditor>,
 ): StateInstance<TState, TEditor> {
+  if (!options) throw new Error("StateOptions are required.");
   let cached = options.initial();
   let dirty = false;
   let rev = 0;
@@ -173,7 +174,7 @@ export function createState<TState, TEditor>(
   return { get, transform, reload: markChanged, invalidate, revision: () => rev };
 }
 
-export function createKeyedDomainState<TItem extends { readonly id: string }>(
+function createKeyedDomainState<TItem extends { readonly id: string }>(
   name: string,
 ): StateInstance<readonly TItem[], DomainEditor<TItem>> {
   return createState<TItem[], DomainEditor<TItem>>({

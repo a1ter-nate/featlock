@@ -14,6 +14,7 @@ function mergeExtraction(existing: RegistrySnapshot, extracted: {
   readonly tests: RegistrySnapshot["tests"];
   readonly invariants: RegistrySnapshot["invariants"];
 }): RegistrySnapshot {
+  if (!existing || !extracted) throw new Error("Existing and extracted snapshots are required.");
   const fMap = new Map(existing.features.map((f) => [f.id, f]));
   for (const f of extracted.features) {
     if (!fMap.has(f.id)) fMap.set(f.id, f);
@@ -146,62 +147,52 @@ async function runHooks(ctx: CommandRunContext): Promise<number> {
   return 0;
 }
 
+async function runSync(c: CommandRunContext): Promise<number> {
+  const out = await c.host.sync(c.repoRoot);
+  console.log(c.asJson ? JSON.stringify(out, null, 2) : `Synced ${out.dbPath} (${out.counts.features} features, ${out.counts.tests} tests, ${out.counts.invariants} invariants).`);
+  return 0;
+}
+
+async function runQuery(c: CommandRunContext): Promise<number> {
+  const term = c.args.filter((a) => !a.startsWith("-")).join(" ");
+  const matches = await c.host.query(c.repoRoot, term);
+  console.log(c.asJson ? JSON.stringify({ term, matches }, null, 2) : matches.map((m) => `${m.id} [${m.status}] ${m.name} — ${m.summary}`).join("\n") || "No matching features.");
+  return 0;
+}
+
+async function runCheckDup(c: CommandRunContext): Promise<number> {
+  const desc = c.args.filter((a) => !a.startsWith("-")).join(" ");
+  const dups = await c.host.checkDup(c.repoRoot, desc);
+  console.log(c.asJson ? JSON.stringify({ description: desc, duplicates: dups }, null, 2) : dups.map((d) => `${d.featureId} (score=${d.score}) — ${d.name} [${d.matchedTokens.join(", ")}]`).join("\n") || "No overlapping features detected.");
+  return 0;
+}
+
+async function runAgentPass(c: CommandRunContext): Promise<number> {
+  const packets = await c.host.buildAgentPasses(c.repoRoot);
+  console.log(c.asJson ? JSON.stringify({ passes: packets }, null, 2) : packets.map((p) => `[${p.passId}] ${p.title} (${p.targets.length} targets)\n  ${p.objective}`).join("\n\n"));
+  return 0;
+}
+
+async function runPluginsList(c: CommandRunContext): Promise<number> {
+  const list = c.host.listPlugins();
+  console.log(c.asJson ? JSON.stringify({ plugins: list }, null, 2) : list.map((p) => `${p.id} [${p.state.status}] (${p.source}${p.guarded ? ", guarded" : ""})`).join("\n"));
+  return 0;
+}
+
 export default Plugin.define({
   id: "featlock.registry-cli",
   async setup(ctx) {
     await ctx.command.transform((ed) => {
       ed.add({ id: "extract", description: "Extract features, tests & invariants (AST + RepoSpec + Veristack) [--write]", run: runExtract });
       ed.add({ id: "check", description: "Verify feature coverage, invariant liveness & anti-deletion guards", run: runCheck });
-      ed.add({
-        id: "sync",
-        description: "Materialize .featlock/registry.sqlite from features/registry.sql",
-        run: async (c) => {
-          const out = await c.host.sync(c.repoRoot);
-          console.log(c.asJson ? JSON.stringify(out, null, 2) : `Synced ${out.dbPath} (${out.counts.features} features, ${out.counts.tests} tests, ${out.counts.invariants} invariants).`);
-          return 0;
-        },
-      });
-      ed.add({
-        id: "query",
-        description: "Search registered features by keyword",
-        run: async (c) => {
-          const term = c.args.filter((a) => !a.startsWith("-")).join(" ");
-          const matches = await c.host.query(c.repoRoot, term);
-          console.log(c.asJson ? JSON.stringify({ term, matches }, null, 2) : matches.map((m) => `${m.id} [${m.status}] ${m.name} — ${m.summary}`).join("\n") || "No matching features.");
-          return 0;
-        },
-      });
-      ed.add({
-        id: "check-dup",
-        description: "Check whether a proposed feature overlaps an existing registered feature",
-        run: async (c) => {
-          const desc = c.args.filter((a) => !a.startsWith("-")).join(" ");
-          const dups = await c.host.checkDup(c.repoRoot, desc);
-          console.log(c.asJson ? JSON.stringify({ description: desc, duplicates: dups }, null, 2) : dups.map((d) => `${d.featureId} (score=${d.score}) — ${d.name} [${d.matchedTokens.join(", ")}]`).join("\n") || "No overlapping features detected.");
-          return 0;
-        },
-      });
+      ed.add({ id: "sync", description: "Materialize .featlock/registry.sqlite from features/registry.sql", run: runSync });
+      ed.add({ id: "query", description: "Search registered features by keyword", run: runQuery });
+      ed.add({ id: "check-dup", description: "Check whether a proposed feature overlaps an existing registered feature", run: runCheckDup });
       ed.add({ id: "record-new", description: "Record a newly added feature + linked test in features/registry.sql", run: runRecordNew });
       ed.add({ id: "record-improvement", description: "Log an improvement to an existing feature in features/registry.sql", run: runRecordImprovement });
-      ed.add({
-        id: "agent-pass",
-        description: "Emit structured multi-pass AI agent investigation packets for invariant discovery",
-        run: async (c) => {
-          const packets = await c.host.buildAgentPasses(c.repoRoot);
-          console.log(c.asJson ? JSON.stringify({ passes: packets }, null, 2) : packets.map((p) => `[${p.passId}] ${p.title} (${p.targets.length} targets)\n  ${p.objective}`).join("\n\n"));
-          return 0;
-        },
-      });
+      ed.add({ id: "agent-pass", description: "Emit structured multi-pass AI agent investigation packets for invariant discovery", run: runAgentPass });
       ed.add({ id: "hooks", description: "Install, remove, or inspect coding agent guard hooks (on|off|status)", run: runHooks });
-      ed.add({
-        id: "plugins",
-        description: "List active and failed FeatLock plugins",
-        run: async (c) => {
-          const list = c.host.listPlugins();
-          console.log(c.asJson ? JSON.stringify({ plugins: list }, null, 2) : list.map((p) => `${p.id} [${p.state.status}] (${p.source}${p.guarded ? ", guarded" : ""})`).join("\n"));
-          return 0;
-        },
-      });
+      ed.add({ id: "plugins", description: "List active and failed FeatLock plugins", run: runPluginsList });
     });
   },
 });

@@ -1,5 +1,4 @@
 import path from "node:path";
-import { parseSync } from "oxc-parser";
 import {
   Plugin,
   type DiscoveredFile,
@@ -9,106 +8,124 @@ import {
   type InvariantRecord,
   type ScanContext,
 } from "@featlock/plugin";
+import {
+  extractExportedSymbols,
+  extractTestCases,
+  scanFileInvariants,
+  slugifyIdentifier,
+} from "./polyglot.ts";
 
-function slugify(raw: string): string {
-  return raw
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 64);
-}
+const NON_PROD_PREFIX =
+  /^(?:\.github|examples|samples|snippets|templates|fixtures|testdata|__fixtures__|bench|benchmarks|benchsuite|perf-measures|fuzz|docs|tools|scripts|build|eng|pkg|ci|caddytest)\//i;
+const NON_PROD_SEGMENT = /(?:^|\/)(?:snippets|samples|benchmarks|__fixtures__|testdata)\//i;
+const GENERATED_FILE_RE = /\.(?:d\.ts|pb\.go|g\.cs|generated\.[a-z]+)$/i;
 
-function areaFromPath(rel: string): string {
+function areaFromPath(rel: string, ext: string): string {
   const parts = rel.split("/");
   if (parts[0] === "packages" && parts[1] === "plugins" && parts[2]) return `plugin:${parts[2]}`;
   if (parts[0] === "packages" && parts[1]) return parts[1];
-  if (parts[0] === "src" && parts[1] && !parts[1].includes(".")) return parts[1];
-  if (parts[0] === "tests" && parts[1] && !parts[1].includes(".")) return parts[1];
-  return path.posix.dirname(rel) === "." ? "root" : parts[0] ?? "core";
-}
-
-function extractTestCases(file: DiscoveredFile): Array<{ readonly name: string; readonly line: number }> {
-  const cases: Array<{ readonly name: string; readonly line: number }> = [];
-  const regex = /\b(?:test|it|describe)\s*\(\s*(["'`])([^"'`\n]{3,140})\1/g;
-  for (const m of file.content.matchAll(regex)) {
-    const title = (m[2] ?? "").trim();
-    if (!title) continue;
-    const line = file.content.slice(0, m.index ?? 0).split("\n").length;
-    cases.push({ name: title, line });
+  if (parts[0] === "crates" && parts[1]) return `crate:${parts[1]}`;
+  if (parts[0] === "modules" && parts[1]) return `module:${parts[1]}`;
+  if ((parts[0] === "cmd" || parts[0] === "internal" || parts[0] === "caddyconfig") && parts.length >= 3 && parts[1]) {
+    return `${parts[0]}:${parts[1]}`;
   }
-  return cases;
+  if (parts[0] === "src" && parts.length >= 3 && parts[1]) return parts[1];
+  if (parts[0] === "tests" && parts.length >= 3 && parts[1]) return parts[1];
+  if (ext === ".py" && parts.length === 2 && parts[0] && parts[1]) {
+    const stem = parts[1].replace(/\.py$/i, "").replace(/^_+/, "");
+    if (stem && !["init", "version", "compat", "types", "main"].includes(stem)) return `${parts[0]}:${stem}`;
+    return `${parts[0]}:core`;
+  }
+  if (ext === ".py" && parts.length >= 3 && parts[0] && parts[1]) {
+    return `${parts[0]}:${parts[1].replace(/^_+/, "") || "core"}`;
+  }
+  return path.posix.dirname(rel) === "." ? "root" : (parts[0] ?? "core");
 }
 
-function extractExportedSymbols(file: DiscoveredFile): string[] {
-  if (![".ts", ".tsx", ".mts", ".js", ".mjs"].includes(file.ext)) return [];
-  const parsed = parseSync(file.rel, file.content, { lang: file.ext === ".tsx" ? "tsx" : "ts" });
-  const symbols: string[] = [];
-  for (const exp of parsed.module.staticExports) {
-    for (const entry of exp.entries) {
-      const name = entry.exportName.name;
-      if (name && name !== "default" && !symbols.includes(name)) symbols.push(name);
+function matchTestsForBucket(
+  area: string,
+  bucket: { prodFiles: DiscoveredFile[]; testFiles: DiscoveredFile[]; symbols: string[] },
+  allTestFiles: readonly DiscoveredFile[],
+): Array<{ readonly file: DiscoveredFile; readonly cases: Array<{ readonly name: string; readonly line: number }> }> {
+  if (!area) throw new Error("area is required.");
+  const matched: Array<{ readonly file: DiscoveredFile; readonly cases: Array<{ readonly name: string; readonly line: number }> }> = [];
+  const seen = new Set<string>();
+
+  for (const tf of bucket.testFiles) {
+    seen.add(tf.rel);
+    matched.push({ file: tf, cases: extractTestCases(tf) });
+  }
+  for (const pf of bucket.prodFiles) {
+    if (pf.ext !== ".rs") continue;
+    const inlineCases = extractTestCases(pf);
+    if (inlineCases.length > 0 && !seen.has(pf.rel)) {
+      seen.add(pf.rel);
+      matched.push({ file: pf, cases: inlineCases });
     }
   }
-  return symbols;
-}
+  if (matched.length > 0) return matched.slice(0, 5);
 
-function scanFileInvariants(file: DiscoveredFile, featureId: string): InvariantRecord[] {
-  if (file.isTest) return [];
-  const found: InvariantRecord[] = [];
-  const lines = file.content.split("\n");
-  for (let i = 0; i < lines.length; i += 1) {
-    const text = (lines[i] ?? "").trim();
-    if (!text) continue;
-    if (/\bRAISE\s*\(\s*ABORT\b/i.test(text)) {
-      found.push({
-        id: `inv:ast:sql-trigger:${slugify(file.rel)}:${i + 1}`,
-        featureId,
-        kind: "db-trigger-guard",
-        statement: `SQLite trigger aborts disallowed mutation at ${file.rel}:${i + 1}`,
-        file: file.rel,
-        line: i + 1,
-        confidence: 0.95,
-        source: "ast",
-        status: "active",
-      });
-    } else if (/\bif\s*\([^)]{3,120}\)\s*(?:return\s+)?throw\s+new\s+(?:[A-Z]\w*)?Error\s*\(/.test(text)) {
-      found.push({
-        id: `inv:ast:precondition:${slugify(file.rel)}:${i + 1}`,
-        featureId,
-        kind: "precondition-guard",
-        statement: `Precondition fail-closed guard: ${text.slice(0, 120)}`,
-        file: file.rel,
-        line: i + 1,
-        confidence: 0.82,
-        source: "ast",
-        status: "active",
-      });
-    } else if (/\bCommand\.make\s*\(\s*["']([^"']+)["']/.test(text)) {
-      const match = /\bCommand\.make\s*\(\s*["']([^"']+)["']/.exec(text);
-      const cmd = match?.[1] ?? "command";
-      found.push({
-        id: `inv:ast:cli-contract:${slugify(cmd)}:${i + 1}`,
-        featureId,
-        kind: "cli-contract",
-        statement: `CLI subcommand '${cmd}' contract registered at ${file.rel}:${i + 1}`,
-        file: file.rel,
-        line: i + 1,
-        confidence: 0.9,
-        source: "ast",
-        status: "active",
-      });
+  const cleanArea = area.replace(/^(?:plugin|crate|module|cmd|internal|caddyconfig):/, "").toLowerCase();
+  const tailToken = cleanArea.split(":").pop() ?? cleanArea;
+  const areaTokens = tailToken.split(/[^a-z0-9]+/).filter((t) => t.length >= 3);
+  const symbolHints = bucket.symbols.filter((s) => s.length >= 4).slice(0, 6).map((s) => s.toLowerCase());
+
+  for (const tf of allTestFiles) {
+    if (seen.has(tf.rel)) continue;
+    const hay = `${tf.rel}\n${tf.content}`.toLowerCase();
+    const hitArea =
+      hay.includes(tailToken) ||
+      hay.includes(slugifyIdentifier(tailToken)) ||
+      (areaTokens.length > 0 && areaTokens.every((tok) => hay.includes(tok)));
+    const hitSymbol = symbolHints.some((sym) => hay.includes(sym));
+    if (hitArea || hitSymbol) {
+      seen.add(tf.rel);
+      matched.push({ file: tf, cases: extractTestCases(tf) });
+      if (matched.length >= 5) break;
     }
   }
-  return found.slice(0, 8);
+  return matched;
 }
 
-const NON_PROD_PREFIX = /^(?:examples|templates|fixtures|testdata|__fixtures__|benchmarks|tools|scripts)\//i;
+function buildFeatureRecords(
+  area: string,
+  bucket: { prodFiles: DiscoveredFile[]; testFiles: DiscoveredFile[]; symbols: string[] },
+  allTestFiles: readonly DiscoveredFile[],
+): ExtractionOutput {
+  if (bucket.prodFiles.length === 0) return { features: [], tests: [], invariants: [] };
+  const featureId = `feat.${slugifyIdentifier(area)}`;
+  const sampleSymbols = bucket.symbols.slice(0, 6).join(", ");
+  const feature: FeatureRecord = {
+    id: featureId,
+    area,
+    name: `${area} capability`,
+    summary: `Extracted from ${bucket.prodFiles.length} source file(s)${sampleSymbols ? ` exporting ${sampleSymbols}` : ""}.`,
+    acceptanceCriteria: `Exports and behaviors in ${area} remain covered by linked tests and preserve extracted invariants.`,
+    status: "active",
+    source: "ast",
+  };
+
+  const tests: FeatureTestLink[] = [];
+  for (const hit of matchTestsForBucket(area, bucket, allTestFiles)) {
+    const pattern = hit.cases[0]?.name ?? path.posix.basename(hit.file.rel);
+    const rung = hit.file.rel.includes(".mbt.") ? "R3" : "R2";
+    tests.push({ featureId, testPath: hit.file.rel, testPattern: pattern, rung });
+  }
+
+  const invariants: InvariantRecord[] = [];
+  for (const pf of bucket.prodFiles) {
+    invariants.push(...scanFileInvariants(pf, featureId));
+    if (invariants.length >= 25) break;
+  }
+  return { features: [feature], tests, invariants: invariants.slice(0, 25) };
+}
 
 function extractFromRepo(ctx: ScanContext): ExtractionOutput {
+  if (!ctx.repoRoot) throw new Error("ScanContext.repoRoot is required.");
   const byArea = new Map<string, { prodFiles: DiscoveredFile[]; testFiles: DiscoveredFile[]; symbols: string[] }>();
   for (const file of ctx.files) {
-    if (!file.isTest && NON_PROD_PREFIX.test(file.rel)) continue;
-    const area = areaFromPath(file.rel);
+    if (!file.isTest && (NON_PROD_PREFIX.test(file.rel) || NON_PROD_SEGMENT.test(file.rel) || GENERATED_FILE_RE.test(file.rel))) continue;
+    const area = areaFromPath(file.rel, file.ext);
     const bucket = byArea.get(area) ?? { prodFiles: [], testFiles: [], symbols: [] };
     if (file.isTest) {
       bucket.testFiles.push(file);
@@ -127,41 +144,11 @@ function extractFromRepo(ctx: ScanContext): ExtractionOutput {
   const allTestFiles = ctx.files.filter((f) => f.isTest);
 
   for (const [area, bucket] of [...byArea.entries()].toSorted((a, b) => a[0].localeCompare(b[0]))) {
-    if (bucket.prodFiles.length === 0) continue;
-    const featureId = `feat.${slugify(area)}`;
-    const sampleSymbols = bucket.symbols.slice(0, 6).join(", ");
-    features.push({
-      id: featureId,
-      area,
-      name: `${area} capability`,
-      summary: `Extracted from ${bucket.prodFiles.length} source file(s)${sampleSymbols ? ` exporting ${sampleSymbols}` : ""}.`,
-      acceptanceCriteria: `Exports and behaviors in ${area} remain covered by linked tests and preserve extracted invariants.`,
-      status: "active",
-      source: "ast",
-    });
-
-    const cleanArea = area.replace(/^plugin:/, "").toLowerCase();
-    const areaTokens = cleanArea.split(/[^a-z0-9]+/).filter((t) => t.length >= 3);
-    const matchedTests = bucket.testFiles.length > 0
-      ? bucket.testFiles
-      : allTestFiles.filter((tf) => {
-          const hay = `${tf.rel}\n${tf.content}`.toLowerCase();
-          if (hay.includes(cleanArea) || hay.includes(slugify(area))) return true;
-          return areaTokens.length > 0 && areaTokens.every((tok) => hay.includes(tok));
-        });
-
-    for (const tf of matchedTests.slice(0, 5)) {
-      const cases = extractTestCases(tf);
-      const pattern = cases[0]?.name ?? path.posix.basename(tf.rel);
-      const rung = tf.rel.includes(".mbt.") ? "R3" : tf.rel.includes(".pbt.") ? "R2" : "R2";
-      tests.push({ featureId, testPath: tf.rel, testPattern: pattern, rung });
-    }
-
-    for (const pf of bucket.prodFiles) {
-      invariants.push(...scanFileInvariants(pf, featureId));
-    }
+    const out = buildFeatureRecords(area, bucket, allTestFiles);
+    features.push(...out.features);
+    tests.push(...out.tests);
+    invariants.push(...out.invariants);
   }
-
   return { features, tests, invariants };
 }
 
@@ -171,7 +158,7 @@ export default Plugin.define({
     await ctx.extractor.transform((ed) => {
       ed.add({
         id: "featlock.ast-scanner.extractor",
-        label: "AST Feature, Test & Invariant Extractor",
+        label: "Polyglot AST Feature, Test & Invariant Extractor",
         extract: extractFromRepo,
       });
     });

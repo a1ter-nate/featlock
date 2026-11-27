@@ -15,6 +15,7 @@ function slugify(raw: string): string {
 }
 
 function scanControlPlan(repoRoot: string): InvariantRecord[] {
+  if (!repoRoot) throw new Error("repoRoot is required.");
   const planPath = path.join(repoRoot, ".verification", "control-plan.json");
   if (!fs.existsSync(planPath)) return [];
   const raw = JSON.parse(fs.readFileSync(planPath, "utf8")) as {

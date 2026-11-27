@@ -1,5 +1,8 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "jsPlugins": [
+    "veristack/lint"
+  ],
   "categories": {
     "correctness": "error",
     "suspicious": "error"
@@ -11,6 +14,11 @@
     "max-lines": ["error", { "max": 500 }],
     "typescript/no-explicit-any": "error",
     "typescript/no-non-null-assertion": "error",
-    "typescript/ban-ts-comment": "error"
+    "typescript/ban-ts-comment": "error",
+    "veristack/no-comments": ["error", { "allow": ["WARNING", "SAFETY"] }],
+    "veristack/no-implicit-state-machine": "error",
+    "veristack/no-reflect-dynamic-invoke": "error",
+    "veristack/no-unknown-type-alias": "error",
+    "veristack/no-unsafe-dictionary-type": "error"
   }
 }

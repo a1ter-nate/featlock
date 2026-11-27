@@ -1,0 +1,60 @@
+name: FeatLock CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify-strict:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 50
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.4.4"
+      - run: bun install --frozen-lockfile
+      - name: Enforce zero ratchets and zero disabled-rule configs
+        run: |
+          if [ -f .vstack.json ] || [ -f .verification/vstack.json ]; then
+            echo "Strict verification forbids .vstack.json overrides." >&2
+            exit 1
+          fi
+      - name: R0 Static, Anti-Slop & State Machines
+        run: |
+          bun run lint:oxlint
+          bun run lint:no-comments
+          bun run lint:state-machines
+      - name: R1 Types, Max Lines & Build
+        run: |
+          bun run typecheck
+          bun run check:max-lines
+          bun run build
+      - name: R2 Pure Unit, Tables & PBT
+        run: bun test ./tests/
+      - name: R3 Boundary & Stateful MBT
+        run: bun test ./tests/cli.integration.test.ts ./tests/registry.mbt.test.ts ./tests/plugin-host.mbt.test.ts ./tests/plugin-architecture/
+      - name: R5 Formal Sync, Laws & Proof
+        run: |
+          bunx vstack formal-sync . --fail
+          bunx vstack laws . --fail
+          bun test ./tests/formal-proof.test.ts
+      - name: R6 Performance & Big-O Budget
+        run: |
+          bun run perf:check
+          bunx vstack big-o .verification/perf-samples.json --fail
+      - name: Veristack Strict Verify & FeatLock Self-Guard
+        run: |
+          bunx vstack verify . --strict
+          bun run check:self-features

@@ -4,13 +4,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import {
-  createPluginHost,
-  materializeRegistryDb,
-  recordFeatureImprovement,
-  recordNewFeature,
-  writeRegistrySql,
-} from "@featlock/core";
+import { createPluginHost, Registry } from "@featlock/core";
 
 describe("SQLite Anti-Deletion Triggers, Git Diff Guards, Dup Detection & Agent Passes [REQ-FLK-GUARD-01]", () => {
   let repoDir = "";
@@ -25,7 +19,7 @@ describe("SQLite Anti-Deletion Triggers, Git Diff Guards, Dup Detection & Agent 
     execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: repoDir, stdio: "ignore" });
     execFileSync("git", ["config", "user.name", "Test"], { cwd: repoDir, stdio: "ignore" });
 
-    recordNewFeature({
+    Registry.recordNew({
       repoRoot: repoDir,
       feature: {
         id: "feat.billing.charge",
@@ -60,7 +54,7 @@ describe("SQLite Anti-Deletion Triggers, Git Diff Guards, Dup Detection & Agent 
   });
 
   test("SQLite BEFORE DELETE triggers abort direct deletion of active features, tests, and invariants", () => {
-    const { dbPath } = materializeRegistryDb(repoDir);
+    const { dbPath } = Registry.materializeDb(repoDir);
     const db = new Database(dbPath);
     try {
       expect(() => db.exec("DELETE FROM features WHERE id = 'feat.billing.charge';")).toThrow(/FEATLOCK_TRIGGER_BLOCK/);
@@ -84,13 +78,13 @@ describe("SQLite Anti-Deletion Triggers, Git Diff Guards, Dup Detection & Agent 
       const passes = await host.buildAgentPasses(repoDir);
       expect(passes.length).toBe(4);
 
-      writeRegistrySql(repoDir, { features: [], tests: [], invariants: [], auditLog: [] });
+      Registry.writeSql(repoDir, { features: [], tests: [], invariants: [], auditLog: [] });
       const deletedRes = await host.check(repoDir);
       expect(deletedRes.ok).toBe(false);
       expect(deletedRes.violations.some((v) => v.rule === "no-silent-feature-deletion")).toBe(true);
       expect(deletedRes.violations.some((v) => v.rule === "no-silent-invariant-deletion")).toBe(true);
 
-      writeRegistrySql(repoDir, {
+      Registry.writeSql(repoDir, {
         features: [
           {
             id: "feat.billing.charge",
@@ -129,7 +123,7 @@ describe("SQLite Anti-Deletion Triggers, Git Diff Guards, Dup Detection & Agent 
       expect(approved.warnings.some((w) => w.rule === "loud-feature-removal-warning")).toBe(true);
 
       execFileSync("git", ["checkout", "--", "features/registry.sql"], { cwd: repoDir, stdio: "ignore" });
-      const improved = recordFeatureImprovement({
+      const improved = Registry.recordImprovement({
         repoRoot: repoDir,
         featureId: "feat.billing.charge",
         summary: "Added idempotency key support",

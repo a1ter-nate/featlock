@@ -5,6 +5,8 @@
   "description": "Tight-core, plugin-extensible SQLite feature, test, and invariant registry & agent guard system — combining AST scanners, RepoSpec graphs, Veristack verification signals, and multi-pass AI agent discovery.",
   "license": "MIT",
   "files": [
+    "bin/",
+    "dist/",
     "src/",
     "packages/",
     "examples/plugins/demo-toggle/",
@@ -16,8 +18,8 @@
     "url": "git+https://github.com/a1ter-nate/featlock.git"
   },
   "bin": {
-    "featlock": "src/cli.ts",
-    "flk": "src/cli.ts"
+    "featlock": "bin/featlock.mjs",
+    "flk": "bin/featlock.mjs"
   },
   "workspaces": [
     "packages/*",
@@ -32,21 +34,26 @@
     "bun": ">=1.2.0"
   },
   "scripts": {
+    "build": "bun build src/cli.ts --outfile dist/cli.mjs --target bun --external oxc-parser",
+    "prepack": "bun run build",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
+    "check:max-lines": "node scripts/check-max-lines.mjs",
+    "perf:check": "bun scripts/check-perf-budget.mjs",
     "lint:oxlint": "bunx oxlint -c .oxlintrc.json --deny-warnings src packages tests examples",
     "lint:no-comments": "bunx vstack no-comments . --fail",
     "lint:state-machines": "bunx vstack state-machines . --fail",
-    "check:vstack": "bunx vstack scan . --allow-missing-rungs --fail-on-cheats",
+    "check:vstack": "bunx vstack verify . --strict",
     "check:repospec": "bunx repospec check . --allow-fail",
     "check:self-features": "bun src/cli.ts check .",
-    "check": "bun run typecheck && bun test && bun run lint:oxlint && bun run lint:no-comments && bun run lint:state-machines && bun run check:vstack && bun run check:self-features"
+    "check": "bun run typecheck && bun run lint:oxlint && bun run check:max-lines && bun run build && bun run perf:check && bun run lint:no-comments && bun run lint:state-machines && bunx vstack formal-sync . --fail && bunx vstack laws . --fail && bunx vstack verify . --strict && bun run check:self-features"
   },
   "dependencies": {
     "oxc-parser": "^0.160.0"
   },
   "devDependencies": {
     "@types/bun": "latest",
+    "fast-check": "^4.11.0",
     "oxlint": "^1.95.0",
     "repospec": "^5.0.0",
     "typescript": "^5.8.2",
