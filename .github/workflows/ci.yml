@@ -42,9 +42,9 @@ jobs:
           bun run check:max-lines
           bun run build
       - name: R2 Pure Unit, Tables & PBT
-        run: bun test ./tests/
+        run: bun test ./tests/ ./packages/
       - name: R3 Boundary & Stateful MBT
-        run: bun test ./tests/cli.test.ts ./tests/registry.mbt.test.ts ./tests/plugin-host.mbt.test.ts ./tests/plugin-architecture/ ./tests/packages/
+        run: bun test ./tests/cli.test.ts ./tests/registry.mbt.test.ts ./tests/plugin-host.mbt.test.ts ./tests/plugin-architecture/ ./packages/
       - name: R5 Formal Sync, Laws & Proof
         run: |
           bunx vstack formal-sync . --fail

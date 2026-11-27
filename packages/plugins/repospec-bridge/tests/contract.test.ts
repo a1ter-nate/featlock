@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import fc from "fast-check";
 import { createPluginHost } from "@featlock/core";
-import repospecPlugin from "../../../../packages/plugins/repospec-bridge/src/index.ts";
+import repospecPlugin from "../src/index.ts";
 
 class ExtractJsonCmd implements fc.AsyncCommand<{ minInvariants: number }, { host: Awaited<ReturnType<typeof createPluginHost>> }> {
   constructor(readonly invId: string) {}

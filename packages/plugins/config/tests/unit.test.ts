@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createPluginHost } from "@featlock/core";
-import configPlugin from "../../../../packages/plugins/config/src/index.ts";
+import configPlugin from "../src/index.ts";
 
 describe("@featlock/plugin-config unit contract", () => {
   test("registers json reporter", async () => {

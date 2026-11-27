@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createPluginHost } from "@featlock/core";
-import passesPlugin from "../../../../packages/plugins/invariant-passes/src/index.ts";
+import passesPlugin from "../src/index.ts";
 
 describe("@featlock/plugin-invariant-passes unit contract", () => {
   test("registers all 4 ordered AI agent invariant discovery passes", async () => {

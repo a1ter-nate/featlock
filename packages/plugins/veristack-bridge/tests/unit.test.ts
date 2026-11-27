@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createPluginHost } from "@featlock/core";
-import veristackPlugin from "../../../../packages/plugins/veristack-bridge/src/index.ts";
+import veristackPlugin from "../src/index.ts";
 
 describe("@featlock/plugin-veristack-bridge unit contract", () => {
   test("scans Veristack control-plan, laws, and rungs artifacts", async () => {

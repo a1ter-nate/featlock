@@ -142,6 +142,32 @@ function windowSlice(lines: readonly string[], start: number, span: number): str
     .join(" ");
 }
 
+function matchTsJsGuard(file: DiscoveredFile, featureId: string, lines: readonly string[], i: number): InvariantRecord | null {
+  const text = (lines[i] ?? "").trim();
+  const next3 = windowSlice(lines, i, 3);
+  const ln = i + 1;
+  if (/\bCommand\.make\s*\(\s*["']([^"']+)["']/.test(text)) {
+    const cmd = /\bCommand\.make\s*\(\s*["']([^"']+)["']/.exec(text)?.[1] ?? "command";
+    return makeInv({ file, featureId, kind: "cli-contract", line: ln, confidence: 0.9, statement: `CLI subcommand '${cmd}' contract registered at ${file.rel}:${ln}`, guardAnchor: text, suffix: `cli-${slugifyIdentifier(cmd)}` });
+  }
+  if (
+    /\bif\s*\([^)]{2,140}\)/.test(text) &&
+    /\bthrow\s+(?:new\s+(?:[A-Z]\w*)?(?:Error|Exception)|[A-Z]\w*(?:Error|Exception)\.[A-Za-z_]\w*)\s*\(/.test(next3)
+  ) {
+    return makeInv({ file, featureId, kind: "precondition-guard", line: ln, confidence: 0.88, statement: `Precondition fail-closed guard: ${text.slice(0, 110)}`, guardAnchor: text, suffix: "precondition" });
+  }
+  if (
+    /\bif\s*\([^)]{2,140}\)/.test(text) &&
+    /\breturn\b[\s\S]{0,160}\b(?:[a-z]\w*(?:Rejection|Denied|Forbidden|Unauthorized|Invalid)\s*\(|new\s+Response\s*\([^)]*40[0134]\b)/.test(windowSlice(lines, i, 5))
+  ) {
+    return makeInv({ file, featureId, kind: "fail-closed-return-guard", line: ln, confidence: 0.86, statement: `Fail-closed rejection guard: ${text.slice(0, 110)}`, guardAnchor: text, suffix: "reject" });
+  }
+  if (/\b(?:assert\.ok|invariant)\s*\(/.test(text)) {
+    return makeInv({ file, featureId, kind: "runtime-invariant", line: ln, confidence: 0.88, statement: `Runtime invariant check: ${text.slice(0, 110)}`, guardAnchor: text, suffix: "invariant" });
+  }
+  return null;
+}
+
 function matchPolyglotLine(
   file: DiscoveredFile,
   featureId: string,
@@ -156,28 +182,7 @@ function matchPolyglotLine(
   if (/\bRAISE\s*\(\s*ABORT\b/i.test(text)) {
     return makeInv({ file, featureId, kind: "db-trigger-guard", line: ln, confidence: 0.95, statement: `SQLite trigger aborts disallowed mutation at ${file.rel}:${ln}`, guardAnchor: text, suffix: "sql-trigger" });
   }
-  if (TS_JS_EXTS.has(file.ext)) {
-    if (/\bCommand\.make\s*\(\s*["']([^"']+)["']/.test(text)) {
-      const cmd = /\bCommand\.make\s*\(\s*["']([^"']+)["']/.exec(text)?.[1] ?? "command";
-      return makeInv({ file, featureId, kind: "cli-contract", line: ln, confidence: 0.9, statement: `CLI subcommand '${cmd}' contract registered at ${file.rel}:${ln}`, guardAnchor: text, suffix: `cli-${slugifyIdentifier(cmd)}` });
-    }
-    if (
-      /\bif\s*\([^)]{2,140}\)/.test(text) &&
-      /\bthrow\s+(?:new\s+(?:[A-Z]\w*)?(?:Error|Exception)|[A-Z]\w*(?:Error|Exception)\.[A-Za-z_]\w*)\s*\(/.test(next3)
-    ) {
-      return makeInv({ file, featureId, kind: "precondition-guard", line: ln, confidence: 0.88, statement: `Precondition fail-closed guard: ${text.slice(0, 110)}`, guardAnchor: text, suffix: "precondition" });
-    }
-    if (
-      /\bif\s*\([^)]{2,140}\)/.test(text) &&
-      /\breturn\b[\s\S]{0,160}\b(?:[a-z]\w*(?:Rejection|Denied|Forbidden|Unauthorized|Invalid)\s*\(|new\s+Response\s*\([^)]*40[0134]\b)/.test(windowSlice(lines, i, 5))
-    ) {
-      return makeInv({ file, featureId, kind: "fail-closed-return-guard", line: ln, confidence: 0.86, statement: `Fail-closed rejection guard: ${text.slice(0, 110)}`, guardAnchor: text, suffix: "reject" });
-    }
-    if (/\b(?:assert\.ok|invariant)\s*\(/.test(text)) {
-      return makeInv({ file, featureId, kind: "runtime-invariant", line: ln, confidence: 0.88, statement: `Runtime invariant check: ${text.slice(0, 110)}`, guardAnchor: text, suffix: "invariant" });
-    }
-    return null;
-  }
+  if (TS_JS_EXTS.has(file.ext)) return matchTsJsGuard(file, featureId, lines, i);
   if (file.ext === ".rs") {
     if (/\b(?:assert!|assert_eq!|assert_ne!|debug_assert!|ensure!|bail!)\s*\(/.test(text)) {
       return makeInv({ file, featureId, kind: "rust-assert-guard", line: ln, confidence: 0.9, statement: `Rust invariant assertion: ${text.slice(0, 110)}`, guardAnchor: text, suffix: "rs-assert" });

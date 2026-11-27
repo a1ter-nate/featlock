@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createPluginHost } from "@featlock/core";
-import antiDeletionPlugin from "../../../../packages/plugins/anti-deletion-guard/src/index.ts";
+import antiDeletionPlugin from "../src/index.ts";
 
 describe("@featlock/plugin-anti-deletion-guard unit contract", () => {
   test("registers guarded anti-deletion plugin that cannot be disabled", async () => {

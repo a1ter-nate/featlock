@@ -11,7 +11,7 @@
       "required": true
     },
     "R2": {
-      "command": "bun test --timeout 30000 ./tests/",
+      "command": "bun test --timeout 30000 ./tests/ ./packages/",
       "required": true,
       "canary": {
         "enabled": true,
@@ -26,7 +26,7 @@
       }
     },
     "R3": {
-      "command": "bun test --timeout 30000 ./tests/cli.test.ts ./tests/registry.mbt.test.ts ./tests/plugin-host.mbt.test.ts ./tests/plugin-architecture/ ./tests/packages/",
+      "command": "bun test --timeout 30000 ./tests/cli.test.ts ./tests/registry.mbt.test.ts ./tests/plugin-host.mbt.test.ts ./tests/plugin-architecture/ ./packages/",
       "required": true
     },
     "R5": {

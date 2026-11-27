@@ -19,7 +19,9 @@
   "include": [
     "src/**/*.ts",
     "packages/*/src/**/*.ts",
+    "packages/*/tests/**/*.ts",
     "packages/plugins/*/src/**/*.ts",
+    "packages/plugins/*/tests/**/*.ts",
     "examples/plugins/*/src/**/*.ts",
     "tests/**/*.ts"
   ]

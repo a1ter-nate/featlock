@@ -9,5 +9,10 @@
   "dependencies": {
     "@featlock/plugin": "workspace:*"
   },
-  "files": ["src/"]
+  "files": [
+    "src/"
+  ],
+  "scripts": {
+    "test": "bun test ./tests/"
+  }
 }

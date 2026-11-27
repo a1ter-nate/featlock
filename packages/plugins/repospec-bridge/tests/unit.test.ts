@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createPluginHost } from "@featlock/core";
-import repospecPlugin from "../../../../packages/plugins/repospec-bridge/src/index.ts";
+import repospecPlugin from "../src/index.ts";
 
 describe("@featlock/plugin-repospec-bridge unit contract", () => {
   test("extracts invariants from RepoSpec rules/*.sql files", async () => {

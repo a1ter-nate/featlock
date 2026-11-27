@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { extractExportedSymbols, extractTestCases, slugifyIdentifier } from "../../../../packages/plugins/ast-scanner/src/polyglot.ts";
+import { extractExportedSymbols, extractTestCases, slugifyIdentifier } from "../src/polyglot.ts";
 
 describe("@featlock/plugin-ast-scanner unit contract", () => {
   test("slugifyIdentifier and polyglot extractors handle TS and Rust inputs", () => {

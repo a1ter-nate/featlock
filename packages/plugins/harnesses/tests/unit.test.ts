@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createPluginHost } from "@featlock/core";
-import harnessesPlugin from "../../../../packages/plugins/harnesses/src/index.ts";
+import harnessesPlugin from "../src/index.ts";
 
 describe("@featlock/plugin-harnesses unit contract", () => {
   test("registers claude, cursor, codex, and copilot agent harnesses", async () => {

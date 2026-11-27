@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import fc from "fast-check";
-import { slugifyIdentifier } from "../../../../packages/plugins/ast-scanner/src/polyglot.ts";
+import { slugifyIdentifier } from "../src/polyglot.ts";
 
 class SlugCmd implements fc.Command<{ maxLen: number }, { seen: string[] }> {
   constructor(readonly raw: string) {}

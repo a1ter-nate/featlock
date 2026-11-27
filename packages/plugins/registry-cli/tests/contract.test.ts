@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import fc from "fast-check";
 import { createPluginHost } from "@featlock/core";
-import cliPlugin from "../../../../packages/plugins/registry-cli/src/index.ts";
+import cliPlugin from "../src/index.ts";
 
 class RunUnknownCmd implements fc.AsyncCommand<{ exitCode: number }, { host: Awaited<ReturnType<typeof createPluginHost>> }> {
   constructor(readonly badName: string) {}

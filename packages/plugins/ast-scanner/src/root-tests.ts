@@ -37,9 +37,9 @@ function addToBucket(map: Map<string, IndexedTestFile[]>, key: string, item: Ind
 
 function extractTokens(text: string): Set<string> {
   const tokens = new Set<string>();
-  for (const m of text.matchAll(/[a-z][a-z0-9_]{3,40}/g)) {
+  for (const m of text.matchAll(/[a-z][a-z0-9]{3,40}/g)) {
     tokens.add(m[0]);
-    if (tokens.size >= 400) break;
+    if (tokens.size >= 500) break;
   }
   return tokens;
 }
@@ -160,9 +160,21 @@ function gatherCandidates(ctx: RootScoreContext, index: TestIndex): IndexedTestF
   };
   addList(index.byDir.get(ctx.prodDir));
   addList(index.byStem.get(ctx.prodStem));
-  if (ctx.enclosingSymbol) addList(index.byToken.get(ctx.enclosingSymbol.toLowerCase()));
-  for (const sym of ctx.symbols.slice(0, 6)) addList(index.byToken.get(sym.toLowerCase()));
+  for (const part of ctx.parentName.split(/[^a-z0-9]+/).filter((p) => p.length >= 4)) {
+    addList(index.byToken.get(part));
+  }
+  if (ctx.enclosingSymbol) {
+    const cleanSym = ctx.enclosingSymbol.toLowerCase().replace(/^_+/, "");
+    addList(index.byToken.get(cleanSym));
+    for (const part of cleanSym.split(/[^a-z0-9]+/).filter((p) => p.length >= 4)) addList(index.byToken.get(part));
+  }
+  for (const sym of ctx.symbols.slice(0, 6)) {
+    const cleanSym = sym.toLowerCase().replace(/^_+/, "");
+    addList(index.byToken.get(cleanSym));
+    for (const part of cleanSym.split(/[^a-z0-9]+/).filter((p) => p.length >= 4)) addList(index.byToken.get(part));
+  }
   for (const kw of ctx.keywords) addList(index.byToken.get(kw));
+  if (out.length === 0 && index.all.length <= 20) addList(index.all);
   return out;
 }
 
