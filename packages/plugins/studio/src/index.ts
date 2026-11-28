@@ -1,10 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { Plugin, type CommandRunContext } from "@featlock/plugin";
+import { buildActionModel, STUDIO_GLOSSARY } from "./guidance.ts";
 import { renderDefaultStudioHtml } from "./render.ts";
 import { startStudioServer } from "./server.ts";
 
-export { renderDefaultStudioHtml, startStudioServer };
+export { buildActionModel, renderDefaultStudioHtml, startStudioServer, STUDIO_GLOSSARY };
 
 function parseFlag(args: readonly string[], flag: string): string | undefined {
   for (let i = 0; i < args.length; i += 1) {
