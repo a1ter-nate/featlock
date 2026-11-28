@@ -1,0 +1,38 @@
+name: False Positive
+description: Report a false-positive guard, drift, or interaction finding from FeatLock
+title: "[FP] "
+labels: ["false-positive"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Tip: Run `featlock report --rule <id> --file <path:line> --anonymize --url` to generate a scrubbed, privacy-safe report automatically.
+  - type: input
+    id: rule
+    attributes:
+      label: Rule / Finding ID
+      placeholder: invariant-guard-dropped-in-code
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Tool & Runtime Version
+      placeholder: featlock@0.1.1 | bun 1.4.4 | darwin/arm64
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Why is this a false positive?
+      description: Explain what the code actually does and why FeatLock should not flag it.
+    validations:
+      required: true
+  - type: textarea
+    id: snippet
+    attributes:
+      label: Minimal Redacted / Anonymized Reproduction
+      description: Never include proprietary code, secrets, or local home paths.
+      render: text
+    validations:
+      required: true

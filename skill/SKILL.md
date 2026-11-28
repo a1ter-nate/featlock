@@ -29,3 +29,11 @@ Use FeatLock before adding, simplifying, modifying, or removing any product capa
 6. **Never silently delete features or invariants**
    - `features/registry.sql` enforces SQLite `BEFORE DELETE` `RAISE(ABORT, ...)` triggers, `feature_relations` consistency (`requires`/`excludes`/`parent_of` DAG), fence monotonicity, and git-diff anti-deletion guards.
    - If asked to remove an active feature or invariant, STOP, confirm with the user, record `adr_ref` + `removal_reason`, ensure no active feature `requires` it, and run `ALLOW_FEATURE_REMOVAL=1 featlock check .`.
+
+## Reporting False Positives or Tool Bugs Upstream
+
+If FeatLock reports a false positive, misses a real regression, or crashes:
+1. **Never leak proprietary client code, internal paths, or secrets.**
+2. Run `featlock report --rule <id> --file <path:line> --anonymize --reason "<why>"` (or craft a generic minimal repro). Default mode is a safe dry-run that scrubs paths and credentials.
+3. For NDA/offline or multi-repo sweeps, append locally with `--local` (queues scrubbed JSONL in `.verification/tool-feedback.jsonl` with zero network calls), then review a deduplicated roll-up with `featlock report --flush`.
+4. Inspect the scrubbed preview, then file via `--submit` (when `gh` is available and approved — `--flush --submit` clears the queue only on success) or `--url` (or `--flush --clear` to clear manually).

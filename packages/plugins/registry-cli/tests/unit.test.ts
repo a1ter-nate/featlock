@@ -3,7 +3,7 @@ import { createPluginHost } from "@featlock/core";
 import cliPlugin from "../src/index.ts";
 
 describe("@featlock/plugin-registry-cli unit contract", () => {
-  test("registers all 13 CLI subcommands", async () => {
+  test("registers all 14 CLI subcommands", async () => {
     expect(cliPlugin.id).toBe("featlock.registry-cli");
     const host = await createPluginHost({ includeBuiltins: false, plugins: [cliPlugin] });
     try {
@@ -14,7 +14,8 @@ describe("@featlock/plugin-registry-cli unit contract", () => {
       expect(ids).toContain("supersede");
       expect(ids).toContain("affected-tests");
       expect(ids).toContain("matrix");
-      expect(ids.length).toBe(13);
+      expect(ids).toContain("report");
+      expect(ids.length).toBe(14);
     } finally {
       await host.dispose();
     }

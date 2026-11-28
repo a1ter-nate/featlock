@@ -5,6 +5,7 @@ import {
   type FenceRung,
   type RegistrySnapshot,
 } from "@featlock/plugin";
+import { runReportCommand } from "./report.ts";
 
 function parseFlag(args: readonly string[], flag: string): string | undefined {
   for (let i = 0; i < args.length; i += 1) {
@@ -134,6 +135,10 @@ async function runCheck(ctx: CommandRunContext): Promise<number> {
     console.log(`featlock check [${res.ok ? "PASS" : "FAIL"}]: ${res.counts.features} features, ${res.counts.tests} tests, ${res.counts.invariants} invariants | ${res.violations.length} error(s), ${res.warnings.length} warning(s)`);
     for (const v of res.violations) console.error(`  [ERROR] ${v.rule}: ${v.message}`);
     for (const w of res.warnings) console.warn(`  [WARN]  ${w.rule}: ${w.message}`);
+    const first = res.violations[0] ?? res.warnings[0];
+    if (first) {
+      console.log(`False positive or tool bug? Run: featlock report --rule ${first.rule} --file ${first.file ?? "features/registry.sql"}`);
+    }
   }
   return res.ok ? 0 : 1;
 }
@@ -322,6 +327,7 @@ export default Plugin.define({
       ed.add({ id: "agent-pass", description: "Emit structured multi-pass AI agent investigation packets for invariant discovery", run: runAgentPass });
       ed.add({ id: "hooks", description: "Install, remove, or inspect coding agent guard hooks (on|off|status)", run: runHooks });
       ed.add({ id: "plugins", description: "List active and failed FeatLock plugins", run: runPluginsList });
+      ed.add({ id: "report", description: "Draft or file a redacted false-positive / bug report (dry-run by default)", run: runReportCommand });
     });
   },
 });

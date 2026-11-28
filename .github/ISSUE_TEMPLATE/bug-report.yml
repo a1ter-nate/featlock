@@ -1,0 +1,33 @@
+name: Bug Report
+description: Report a crash, false negative, or unexpected behavior in FeatLock
+title: "[BUG] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Tip: Run `featlock report --kind bug --rule <id> --file <path:line> --anonymize --url` to generate a scrubbed report automatically.
+  - type: input
+    id: environment
+    attributes:
+      label: Tool & Runtime Version
+      placeholder: featlock@0.1.1 | bun 1.4.4 | darwin/arm64
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: Command Executed
+      placeholder: featlock check . --strict-drift
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened vs. what you expected?
+    validations:
+      required: true
+  - type: textarea
+    id: snippet
+    attributes:
+      label: Minimal Redacted Reproduction / Error Output
+      description: Never include proprietary code, secrets, or local home paths.
+      render: text

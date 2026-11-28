@@ -66,6 +66,13 @@ const host = await createPluginHost({
 });
 try {
   process.exitCode = await host.runCli(cleanedArgs, repoDir);
+} catch (err) {
+  const msg = err instanceof Error ? err.message : String(err);
+  console.error(`featlock crash: ${msg}`);
+  if (!cleanedArgs.includes("--json")) {
+    console.error("False positive or tool bug? Run: featlock report --kind crash --rule unhandled-error --file <path:line>");
+  }
+  process.exitCode = 1;
 } finally {
   await host.dispose();
 }
