@@ -397,6 +397,7 @@ export default Plugin.define({
   id: "featlock.guard.anti-deletion",
   guarded: true,
   async setup(ctx) {
+    if (!ctx) throw new Error("FeatLock plugin context is required.");
     await ctx.guard.transform((ed) => {
       ed.add({
         id: "featlock.guard.anti-deletion.core",
@@ -410,6 +411,20 @@ export default Plugin.define({
           ...checkStructuralAndInteractionHealth(checkCtx),
           ...checkStagedDiffRecorded(checkCtx),
         ],
+      });
+    });
+    await ctx.analytics.transform((ed) => {
+      ed.add({
+        id: "featlock.analytics.core",
+        analyzeMatrix: (scan, registry) => ({
+          scattering: computeScatteringAndTangling(registry),
+          interactions: computeFeatureInteractions(registry, scan.repoRoot),
+          flags: detectFeatureFlags(scan.files, registry),
+        }),
+        affectedTests: (repoRoot, registry, opts) =>
+          selectAffectedTests(repoRoot, registry, opts?.range, opts?.changedFiles),
+        concernSubgraph: (repoRoot, feature, registry) =>
+          projectConcernSubgraph(repoRoot, feature, registry),
       });
     });
   },

@@ -1,6 +1,15 @@
+import type {
+  AffectedTestsResult,
+  ConcernSubgraphResult,
+  FeatlockStudioData,
+  MatrixAnalysisResult,
+  StudioDomainSnapshot,
+  StudioEditor,
+} from "./studio-types.ts";
+
 export type FeatureStatus = "active" | "deprecated" | "removed";
 
-export type InvariantSource = "ast" | "repospec" | "veristack" | "agent" | "manual" | string;
+export type InvariantSource = "ast" | "repospec" | "veristack" | "agent" | "manual" | (string & {});
 
 export type AuditAction = "added" | "improved" | "invariant_added" | "superseded" | "deprecated" | "removed";
 
@@ -145,6 +154,17 @@ export interface DomainTransformHandle<TItem> {
   readonly reload: () => Promise<void>;
 }
 
+export interface CustomDomainTransformHandle<TEditor> {
+  readonly transform: (cb: (editor: TEditor) => void) => Promise<PluginRegistration>;
+  readonly reload: () => Promise<void>;
+}
+
+export interface LanguageSpec {
+  readonly id: string;
+  readonly extensions: readonly string[];
+  readonly isTestFile?: (rel: string) => boolean;
+}
+
 export interface ExtractorSpec {
   readonly id: string;
   readonly label: string;
@@ -161,6 +181,21 @@ export interface GuardSpec {
   readonly id: string;
   readonly guarded?: boolean;
   readonly evaluate: (ctx: CheckContext) => Promise<readonly GuardViolation[]> | readonly GuardViolation[];
+}
+
+export interface AnalyticsProviderSpec {
+  readonly id: string;
+  readonly analyzeMatrix?: (scan: ScanContext, registry: RegistrySnapshot) => MatrixAnalysisResult;
+  readonly affectedTests?: (
+    repoRoot: string,
+    registry: RegistrySnapshot,
+    opts?: { readonly range?: string; readonly changedFiles?: readonly string[] },
+  ) => AffectedTestsResult;
+  readonly concernSubgraph?: (
+    repoRoot: string,
+    feature: FeatureRecord,
+    registry: RegistrySnapshot,
+  ) => ConcernSubgraphResult | null;
 }
 
 export interface AgentPassSpec {
@@ -210,6 +245,11 @@ export interface SupersedeInvariantInput {
   readonly actor?: string;
 }
 
+export interface RenderStudioOptions {
+  readonly rendererId?: string;
+  readonly inline?: boolean;
+}
+
 export interface HostApiFacade {
   readonly listPlugins: () => readonly PluginStatus[];
   readonly extract: (repoRoot: string) => Promise<ExtractionOutput>;
@@ -240,47 +280,26 @@ export interface HostApiFacade {
     readonly actor?: string;
   }) => Promise<RegistrySnapshot>;
   readonly supersedeInvariant: (input: SupersedeInvariantInput) => Promise<RegistrySnapshot>;
-  readonly analyzeMatrix: (repoRoot: string) => Promise<{
-    readonly scattering: {
-      readonly dosByFeature: Readonly<Record<string, number>>;
-      readonly dofByFile: Readonly<Record<string, number>>;
-      readonly highScattering: readonly { readonly featureId: string; readonly files: number }[];
-      readonly highTangling: readonly { readonly file: string; readonly features: readonly string[] }[];
-    };
-    readonly interactions: readonly {
-      readonly featureA: string;
-      readonly featureB: string;
-      readonly sharedVia: readonly string[];
-      readonly sharedTests: readonly string[];
-      readonly pairwiseGap: boolean;
-    }[];
-    readonly flags: readonly { readonly flag: string; readonly file: string; readonly line: number; readonly status: "linked" | "unlinked" | "constant" }[];
-  }>;
+  readonly analyzeMatrix: (repoRoot: string) => Promise<MatrixAnalysisResult>;
   readonly affectedTests: (
     repoRoot: string,
     opts?: { readonly range?: string; readonly changedFiles?: readonly string[] },
-  ) => Promise<{
-    readonly changedFiles: readonly string[];
-    readonly affectedFeatures: readonly string[];
-    readonly transitiveFiles: readonly string[];
-    readonly prioritizedTests: readonly {
-      readonly testPath: string;
-      readonly featureIds: readonly string[];
-      readonly score: number;
-      readonly reason: string;
-    }[];
-  }>;
+  ) => Promise<AffectedTestsResult>;
   readonly concernSubgraph: (
     repoRoot: string,
     featureId: string,
-  ) => Promise<{
-    readonly nodes: readonly string[];
-    readonly edges: readonly { readonly from: string; readonly to: string; readonly kind: string }[];
-    readonly crossBoundaryLeaks: readonly string[];
-  } | null>;
+  ) => Promise<ConcernSubgraphResult | null>;
+  readonly collectStudioData: (repoRoot: string) => Promise<FeatlockStudioData>;
+  readonly renderStudio: (
+    repoRootOrData: string | FeatlockStudioData,
+    opts?: RenderStudioOptions,
+  ) => Promise<string>;
+  readonly getStudioState: () => StudioDomainSnapshot;
   readonly writeRegistry: (repoRoot: string, snapshot: RegistrySnapshot) => Promise<string>;
   readonly readRegistry: (repoRoot: string) => Promise<RegistrySnapshot>;
   readonly buildAgentPasses: (repoRoot: string) => Promise<readonly AgentPassPacket[]>;
+  readonly getLanguages: () => readonly LanguageSpec[];
+  readonly getAnalytics: () => readonly AnalyticsProviderSpec[];
   readonly getHarnesses: () => readonly HarnessSpec[];
   readonly getCommands: () => readonly CommandSpec[];
   readonly getReporters: () => readonly ReporterSpec[];
@@ -310,18 +329,23 @@ export interface CheckResult {
 export interface PluginStatus {
   readonly id: string;
   readonly source: "builtin" | "package" | "local" | "inline";
+  readonly status: "active" | "failed";
   readonly state: { readonly status: "active" | "failed"; readonly error?: string };
   readonly guarded: boolean;
+  readonly error?: string;
 }
 
 export interface FeatlockPluginContext {
   readonly options: Record<string, unknown>;
+  readonly language: DomainTransformHandle<LanguageSpec>;
   readonly extractor: DomainTransformHandle<ExtractorSpec>;
   readonly invariantScanner: DomainTransformHandle<InvariantScannerSpec>;
   readonly guard: DomainTransformHandle<GuardSpec>;
+  readonly analytics: DomainTransformHandle<AnalyticsProviderSpec>;
   readonly agentPass: DomainTransformHandle<AgentPassSpec>;
   readonly harness: DomainTransformHandle<HarnessSpec>;
   readonly reporter: DomainTransformHandle<ReporterSpec>;
+  readonly studio: CustomDomainTransformHandle<StudioEditor>;
   readonly command: DomainTransformHandle<CommandSpec>;
   readonly check: {
     readonly hook: (
@@ -334,9 +358,7 @@ export interface FeatlockPluginContext {
 export interface FeatlockPluginDefinition {
   readonly id: string;
   readonly guarded?: boolean;
-  readonly setup: (ctx: FeatlockPluginContext) => Promise<void | (() => Promise<void> | void)> | void | (() => Promise<void> | void);
-}
-
-export interface FeatlockPlugin extends FeatlockPluginDefinition {
-  readonly __featlockPlugin: true;
+  readonly setup: (
+    ctx: FeatlockPluginContext,
+  ) => Promise<void | (() => Promise<void> | void)> | void | (() => Promise<void> | void);
 }

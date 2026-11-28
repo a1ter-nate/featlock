@@ -23,9 +23,10 @@ Use FeatLock before adding, simplifying, modifying, or removing any product capa
    - When simplifying a runtime guard into a stronger static fence (e.g., `R1` type boundary or `R0` lint — *"Parse, Don't Validate"*), keep the black-box `root_test_path` green and run:
      `featlock supersede --id <invId> --by type-boundary --rung R1 --rationale "<why>"`
    - No `ALLOW_FEATURE_REMOVAL=1` is needed when the fence rung stays equal or gets stronger and `root_test_path` stays live.
-5. **Fast targeted verification & structural health**
+5. **Fast targeted verification, structural health & visual Studio UI**
    - Run `featlock affected-tests [base..head]` to select and prioritize regression tests (bugfix-origin & high-invariant features first, with STARTS transitive closure when `repospec.sqlite` is present).
    - Run `featlock matrix` to inspect Degree of Scattering (`DoS`), Degree of Tangling (`DoF`), pairwise (`t=2`) feature interaction test gaps, and stale/unlinked feature flags.
+   - Run `featlock ui .` (`--out`, `--serve`, `--json`, `--plugin <pkg>`, `--renderer <id>`) to render/serve interactive visualizations or load custom UI visualization plugins built via `ctx.studio.transform(...)`.
 6. **Never silently delete features or invariants**
    - `features/registry.sql` enforces SQLite `BEFORE DELETE` `RAISE(ABORT, ...)` triggers, `feature_relations` consistency (`requires`/`excludes`/`parent_of` DAG), fence monotonicity, and git-diff anti-deletion guards.
    - If asked to remove an active feature or invariant, STOP, confirm with the user, record `adr_ref` + `removal_reason`, ensure no active feature `requires` it, and run `ALLOW_FEATURE_REMOVAL=1 featlock check .`.

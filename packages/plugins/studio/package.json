@@ -1,0 +1,14 @@
+{
+  "name": "@featlock/plugin-studio",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@featlock/plugin": "workspace:*"
+  },
+  "scripts": {
+    "test": "bun test ./tests/"
+  }
+}

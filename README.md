@@ -12,6 +12,7 @@ FeatLock is the third pillar alongside [RepoSpec](https://github.com/a1ter-nate/
   - `@featlock/plugin-veristack-bridge` (consumes `.verification/control-plan.json`, `.verification/laws/*.laws.json`, and `.verification/rungs.json`)
   - `@featlock/plugin-invariant-passes` (4-pass AI agent discovery packets: Inventory → Test Binding → Deep Invariant Mining → Regression Guard Audit)
 - **Non-removable anti-deletion guard (`@featlock/plugin-anti-deletion-guard`, `guarded: true`)** enforcing ADR-gated removals (`ALLOW_FEATURE_REMOVAL=1`), root-test liveness, and `--strict-drift` checks for unrecorded new features, invariants, and capability tests.
+- **Plugin-extensible Studio UI (`@featlock/plugin-studio`)** via `featlock ui` / `featlock studio` (static HTML export, `--json` payload, or `--serve` live server + `/api/data`), with first-class `ctx.studio.transform(...)` hooks to add custom data providers, widgets, visualization tabs, themes, CSS, HTTP routes, or full standalone UI renderers.
 - **Agent harnesses & portable skill** (`@featlock/plugin-harnesses` + `skill/SKILL.md`) for Claude Code, Codex, Cursor, and GitHub Copilot.
 
 ## Install & Quick Start
@@ -39,7 +40,34 @@ bunx featlock record-improvement --id feat.billing.retry --summary "Added expone
 # 5. Emit 4-pass AI agent invariant discovery packets & wire coding-agent hooks
 bunx featlock agent-pass . --json
 bunx featlock hooks on
+
+# 6. Render or serve the interactive Studio UI (and load custom UI visualization plugins)
+bunx featlock ui . --out .featlock/studio.html
+bunx featlock ui . --serve --port 4318
+bunx featlock ui . --plugin ./examples/plugins/custom-ui-viz --renderer custom-minimal-board --out .featlock/board.html
 ```
+
+## Building Custom UI Plugins (`@featlock/plugin`)
+
+Every FeatLock capability — including `@featlock/plugin-studio` itself — uses the same replayable plugin SDK (`Plugin.define({ id, setup(ctx) })`). Plugins can extend or replace the Studio UI via `ctx.studio.transform(...)`:
+
+```ts
+import { Plugin } from "featlock/plugin";
+
+export default Plugin.define({
+  id: "my-org.featlock-ui",
+  async setup(ctx) {
+    await ctx.studio.transform((ed) => {
+      ed.addDataProvider({ id: "summary", provide: (data) => ({ total: data.counts.features }) });
+      ed.addWidget({ id: "kpi", title: "Custom KPI", renderHtml: (d) => `<b>${d.counts.invariants}</b>` });
+      ed.addTab({ id: "my-viz", label: "My Viz", renderHtml: (d) => `<section>${d.repoName}</section>` });
+      ed.addRenderer({ id: "my-full-ui", label: "Custom Full UI", renderHtml: (r) => `<!doctype html>...` });
+    });
+  },
+});
+```
+
+Load via `--plugin ./path/to/plugin` or `.featlock/config.json` (`{ "plugins": ["./my-ui-plugin"] }`), or inspect the runnable reference in [`examples/plugins/custom-ui-viz/`](./examples/plugins/custom-ui-viz/).
 
 ## License
 

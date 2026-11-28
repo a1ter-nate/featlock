@@ -25,7 +25,7 @@
   "files": [
     "bin/",
     "dist/",
-    "examples/plugins/demo-toggle/",
+    "examples/plugins/",
     "skill/",
     "LICENSE",
     "README.md"
@@ -66,6 +66,7 @@
     "check:vstack": "bunx vstack verify . --strict",
     "check:repospec": "bunx repospec check . --allow-fail",
     "check:self-features": "bun src/cli.ts check .",
+    "synthetic-check": "bun scripts/verify-synthetic.ts",
     "check": "bun run typecheck && bun run lint:oxlint && bun run check:max-lines && bun run build && bun run perf:check && bun run lint:no-comments && bun run lint:state-machines && bunx vstack formal-sync . --fail && bunx vstack laws . --fail && bunx vstack verify . --strict && bun run check:self-features"
   },
   "dependencies": {
@@ -77,6 +78,6 @@
     "oxlint": "^1.95.0",
     "repospec": "^5.0.0",
     "typescript": "^5.8.2",
-    "veristack": "^0.1.18"
+    "veristack": "^0.1.27"
   }
 }

@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import type { DiscoveredFile, ScanContext } from "@featlock/plugin";
+import type { DiscoveredFile, LanguageSpec, ScanContext } from "@featlock/plugin";
 
 const SKIP_DIRS = new Set([
   ".git",
@@ -12,6 +12,8 @@ const SKIP_DIRS = new Set([
   ".claude",
   ".codex",
   ".cursor",
+  ".agents",
+  ".amp",
   ".next",
   ".turbo",
   "coverage",
@@ -23,12 +25,17 @@ const SKIP_DIRS = new Set([
   "obj",
 ]);
 
-const SOURCE_EXTS = new Set([".ts", ".tsx", ".mts", ".js", ".mjs", ".py", ".rs", ".cs", ".go", ".sql"]);
+const BASE_SOURCE_EXTS = new Set([".ts", ".tsx", ".mts", ".js", ".mjs", ".py", ".rs", ".cs", ".go", ".sql"]);
 
 const NON_LIVE_TEST_RE = /(?:^|\/)(?:examples|fixtures|templates|caught|testdata|snapshots)\//i;
 
-function isTestPath(rel: string): boolean {
+function isTestPath(rel: string, languages?: readonly LanguageSpec[]): boolean {
   if (NON_LIVE_TEST_RE.test(rel)) return false;
+  if (languages) {
+    for (const lang of languages) {
+      if (lang.isTestFile && lang.isTestFile(rel)) return true;
+    }
+  }
   return (
     /(?:^|\/)(?:tests?|__tests__|spec|caddytest|testmocks)\//i.test(rel) ||
     /\.(?:test|spec)\.[cm]?[jt]sx?$/i.test(rel) ||
@@ -38,11 +45,27 @@ function isTestPath(rel: string): boolean {
   );
 }
 
-export function discoverRepo(repoDir: string): ScanContext {
+function buildAllowedExts(languages?: readonly LanguageSpec[]): ReadonlySet<string> {
+  if (!languages || languages.length === 0) return BASE_SOURCE_EXTS;
+  const exts = new Set(BASE_SOURCE_EXTS);
+  for (const lang of languages) {
+    for (const ext of lang.extensions) {
+      const norm = ext.startsWith(".") ? ext.toLowerCase() : `.${ext.toLowerCase()}`;
+      exts.add(norm);
+    }
+  }
+  return exts;
+}
+
+export function discoverRepo(
+  repoDir: string,
+  opts?: { readonly languages?: readonly LanguageSpec[] },
+): ScanContext {
   const repoRoot = path.resolve(repoDir);
   if (!fs.existsSync(repoRoot)) {
     throw new Error(`Repository directory does not exist: ${repoRoot}`);
   }
+  const allowedExts = buildAllowedExts(opts?.languages);
   const allRelPaths: string[] = [];
   const files: DiscoveredFile[] = [];
   const textCache = new Map<string, string | null>();
@@ -60,7 +83,7 @@ export function discoverRepo(repoDir: string): ScanContext {
         const rel = path.relative(repoRoot, abs).split(path.sep).join("/");
         allRelPaths.push(rel);
         const ext = path.extname(entry.name).toLowerCase();
-        if (!SOURCE_EXTS.has(ext)) continue;
+        if (!allowedExts.has(ext)) continue;
         const stat = fs.statSync(abs);
         if (stat.size > 512_000) continue;
         const content = fs.readFileSync(abs, "utf8");
@@ -69,7 +92,7 @@ export function discoverRepo(repoDir: string): ScanContext {
           rel,
           abs,
           ext,
-          isTest: isTestPath(rel),
+          isTest: isTestPath(rel, opts?.languages),
           content,
           lines: content.length === 0 ? 0 : content.split("\n").length,
         });

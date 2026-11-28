@@ -1,0 +1,49 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "FeatLock Studio API",
+    "version": "1.0.0",
+    "description": "Live JSON and HTML contract exposed by featlock ui --serve for built-in and custom UI visualization plugins."
+  },
+  "paths": {
+    "/": {
+      "get": {
+        "summary": "Render interactive Studio HTML (default or plugin-selected renderer)",
+        "responses": {
+          "200": { "description": "Self-contained Studio HTML document" }
+        }
+      }
+    },
+    "/api/health": {
+      "get": {
+        "summary": "Server health probe",
+        "responses": {
+          "200": { "description": "JSON health payload with ok and repoRoot" }
+        }
+      }
+    },
+    "/api/plugins": {
+      "get": {
+        "summary": "List active and failed FeatLock plugins",
+        "responses": {
+          "200": { "description": "JSON plugin status array" }
+        }
+      }
+    },
+    "/api/data": {
+      "get": {
+        "summary": "Return complete FeatlockStudioData snapshot including plugin extensions",
+        "parameters": [
+          {
+            "name": "refresh",
+            "in": "query",
+            "schema": { "type": "string", "enum": ["0", "1"] }
+          }
+        ],
+        "responses": {
+          "200": { "description": "FeatlockStudioData JSON payload" }
+        }
+      }
+    }
+  }
+}

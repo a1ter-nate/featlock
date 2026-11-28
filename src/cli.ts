@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createPluginHost, type PluginOperation } from "@featlock/core";
 
-const REPO_SCOPED_COMMANDS = new Set(["extract", "check", "sync", "agent-pass", "hooks", "plugins", "matrix"]);
+const REPO_SCOPED_COMMANDS = new Set(["extract", "check", "sync", "agent-pass", "hooks", "plugins", "matrix", "ui", "studio"]);
 
 function loadRepoOperations(repoDir: string): PluginOperation[] {
   const cfgPath = path.join(repoDir, ".featlock", "config.json");
@@ -28,7 +28,9 @@ function parseCliArgs(rawArgs: readonly string[]): {
   for (let i = 0; i < rawArgs.length; i += 1) {
     const cur = rawArgs[i] ?? "";
     if (cur === "--plugin" && rawArgs[i + 1]) {
-      extraOps.push({ type: "add", target: rawArgs[i + 1] ?? "" });
+      const rawTarget = rawArgs[i + 1] ?? "";
+      const cwdCandidate = path.isAbsolute(rawTarget) ? rawTarget : path.resolve(process.cwd(), rawTarget);
+      extraOps.push({ type: "add", target: fs.existsSync(cwdCandidate) ? cwdCandidate : rawTarget });
       i += 1;
     } else if (cur === "--remove-plugin" && rawArgs[i + 1]) {
       extraOps.push({ type: "remove", target: rawArgs[i + 1] ?? "" });

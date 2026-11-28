@@ -45,6 +45,8 @@ jobs:
         run: bun test ./tests/ ./packages/
       - name: R3 Boundary & Stateful MBT
         run: bun test ./tests/cli.test.ts ./tests/registry.mbt.test.ts ./tests/plugin-host.mbt.test.ts ./tests/plugin-architecture/ ./packages/
+      - name: R4 Real-Engine SQLite & Studio HTTP Integration
+        run: bun test ./tests/integration/ ./packages/plugins/studio/tests/studio-http.integration.test.ts
       - name: R5 Formal Sync, Laws & Proof
         run: |
           bunx vstack formal-sync . --fail
@@ -54,6 +56,10 @@ jobs:
         run: |
           bun run perf:check
           bunx vstack big-o .verification/perf-samples.json --fail
+      - name: R7 Studio Golden-Path E2E
+        run: bun test ./packages/plugins/studio/tests/studio-serve.e2e.test.ts
+      - name: R8 Synthetic Probe
+        run: bun run synthetic-check
       - name: Veristack Strict Verify & FeatLock Self-Guard
         run: |
           bunx vstack verify . --strict

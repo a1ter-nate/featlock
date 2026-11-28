@@ -13,7 +13,7 @@
         "oxlint": "^1.95.0",
         "repospec": "^5.0.0",
         "typescript": "^5.8.2",
-        "veristack": "^0.1.18",
+        "veristack": "^0.1.27",
       },
     },
     "packages/core": {
@@ -76,6 +76,13 @@
         "@featlock/plugin": "workspace:*",
       },
     },
+    "packages/plugins/studio": {
+      "name": "@featlock/plugin-studio",
+      "version": "0.1.0",
+      "dependencies": {
+        "@featlock/plugin": "workspace:*",
+      },
+    },
     "packages/plugins/veristack-bridge": {
       "name": "@featlock/plugin-veristack-bridge",
       "version": "0.1.0",
@@ -112,6 +119,8 @@
     "@featlock/plugin-registry-cli": ["@featlock/plugin-registry-cli@workspace:packages/plugins/registry-cli"],
 
     "@featlock/plugin-repospec-bridge": ["@featlock/plugin-repospec-bridge@workspace:packages/plugins/repospec-bridge"],
+
+    "@featlock/plugin-studio": ["@featlock/plugin-studio@workspace:packages/plugins/studio"],
 
     "@featlock/plugin-veristack-bridge": ["@featlock/plugin-veristack-bridge@workspace:packages/plugins/veristack-bridge"],
 
@@ -249,7 +258,7 @@
 
     "undici-types": ["undici-types@8.9.0", "", {}, "sha512-KTDyRTYX8sWmKXAikPHHSyc63CRPETMctyjKFupcC6OBLXT3xsN0e9aF7m+mIXutFWpUXuedtowG7iLOzp0kQg=="],
 
-    "veristack": ["veristack@0.1.18", "", { "dependencies": { "oxc-parser": "^0.160.0", "smol-toml": "^1.9.1", "yaml": "^2.9.1" }, "bin": { "vstack": "bin/vstack.mjs", "veristack": "bin/vstack.mjs" } }, "sha512-4cx44zs5q/Sz/QHJO9vZrVztLYSE79p18INF5xPZ5RucqLeWmKLb4SHPY4nBXn5guyeFhT/mRBhU6Vbi7yF+RQ=="],
+    "veristack": ["veristack@0.1.27", "", { "dependencies": { "oxc-parser": "^0.160.0", "smol-toml": "^1.9.1", "yaml": "^2.9.1" }, "bin": { "vstack": "bin/vstack.mjs", "veristack": "bin/vstack.mjs" } }, "sha512-H7CGsLc88E8mn/2YPhaYoNllW69PpDZilY/N+reWssrT2YnjwhOkENsTOW2QoekBQL0BJzL49juTHkMaznncsw=="],
 
     "ws": ["ws@8.23.1", "", { "peerDependencies": { "bufferutil": "^4.0.1", "utf-8-validate": ">=5.0.2" }, "optionalPeers": ["bufferutil", "utf-8-validate"] }, "sha512-1rzWDSN0NOi3tpwgHsQExjWRoKUGtjCkJ2gZRaaRtzhYLboMytOI9pj9PU7yCgY37auqdd4OyLofZDbkeuZmPA=="],
 

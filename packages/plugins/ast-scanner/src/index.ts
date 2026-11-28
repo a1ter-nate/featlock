@@ -23,14 +23,20 @@ const NON_PROD_SEGMENT = /(?:^|\/)(?:snippets|samples|benchmarks|__fixtures__|fi
 const GENERATED_FILE_RE = /\.(?:d\.ts|pb\.go|g\.cs|generated\.[a-z]+)$|(?:^|\/)(?:cake\.cs|build\.rs|setup\.py|conftest\.py)$/i;
 const SRC_SUBFEATURE_CONTAINERS = new Set(["middleware", "helper", "router", "adapter", "plugins", "features", "services", "handlers"]);
 
-function areaFromPath(rel: string, ext: string): string {
+const CONTAINER_AREA_PREFIX: Readonly<Record<string, string>> = {
+  packages: "",
+  apps: "app:",
+  crates: "crate:",
+  modules: "module:",
+};
+
+export function areaFromPath(rel: string, ext: string): string {
   const parts = rel.split("/");
-  if (parts[0] === "packages" && parts[1] === "plugins" && parts[2]) return `plugin:${parts[2]}`;
-  if (parts[0] === "packages" && parts[1]) return parts[1];
-  if (parts[0] === "crates" && parts[1]) return `crate:${parts[1]}`;
-  if (parts[0] === "modules" && parts[1]) return `module:${parts[1]}`;
-  if ((parts[0] === "cmd" || parts[0] === "internal" || parts[0] === "caddyconfig") && parts.length >= 3 && parts[1]) {
-    return `${parts[0]}:${parts[1]}`;
+  const [first, second, third] = parts;
+  if (first === "packages" && second === "plugins" && third) return `plugin:${third}`;
+  if (first && second && first in CONTAINER_AREA_PREFIX) return `${CONTAINER_AREA_PREFIX[first]}${second}`;
+  if ((first === "cmd" || first === "internal" || first === "caddyconfig") && parts.length >= 3 && second) {
+    return `${first}:${second}`;
   }
   if (ext === ".py" && parts[0] === "src" && parts.length >= 5 && parts[1] && parts[2] === parts[1] && parts[3]) {
     return `${parts[1]}:${parts[3].replace(/^_+/, "") || "core"}`;

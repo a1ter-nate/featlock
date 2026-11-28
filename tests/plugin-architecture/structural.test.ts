@@ -13,7 +13,21 @@ const REQUIRED_PLUGINS = [
   "anti-deletion-guard",
   "harnesses",
   "registry-cli",
+  "studio",
   "config",
+] as const;
+
+const REQUIRED_DOMAINS = [
+  "language",
+  "extractor",
+  "invariantScanner",
+  "guard",
+  "analytics",
+  "agentPass",
+  "harness",
+  "reporter",
+  "studio",
+  "command",
 ] as const;
 
 function isSourceTs(name: string): boolean {
@@ -56,8 +70,22 @@ function listImports(relFile: string): string[] {
   return specs;
 }
 
-describe("FeatLock Tight-Core & Dogfooded-Plugin Structural Laws [REQ-FLK-PLUGINS-01]", () => {
-  test("packages/plugin SDK has zero imports from packages/core or packages/plugins", () => {
+describe("Law 1: Tight Core & Real Package Boundary (No Barrel Illusion) [REQ-FLK-PLUGINS-01]", () => {
+  test("dedicated packages/plugin and packages/core exist and are exported from root package.json", () => {
+    const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")) as {
+      workspaces?: string[];
+      exports?: Record<string, string>;
+      dependencies?: Record<string, string>;
+    };
+    expect(fs.existsSync(path.join(ROOT, "packages/plugin/package.json"))).toBe(true);
+    expect(fs.existsSync(path.join(ROOT, "packages/core/package.json"))).toBe(true);
+    expect(pkg.exports?.["./plugin"]).toBeDefined();
+    expect(pkg.exports?.["./core"]).toBeDefined();
+    expect(pkg.workspaces).toContain("packages/plugins/*");
+    expect(Object.keys(pkg.dependencies ?? {}).length).toBeLessThanOrEqual(2);
+  });
+
+  test("packages/plugin SDK has zero upward imports from packages/core or packages/plugins", () => {
     const files = collectFiles("packages/plugin/src");
     expect(files.length).toBeGreaterThan(0);
     const violations: string[] = [];
@@ -85,8 +113,10 @@ describe("FeatLock Tight-Core & Dogfooded-Plugin Structural Laws [REQ-FLK-PLUGIN
     }
     expect(violations).toEqual([]);
   });
+});
 
-  test("all 8 first-party built-in plugins exist under packages/plugins/* and import zero core internals", () => {
+describe("Law 2, 3 & 4: Dogfooded Built-In Plugins, Replayable Domains & Zero Backdoors", () => {
+  test("all 9 first-party built-in plugins exist under packages/plugins/*, use Plugin.define, and import zero core internals", () => {
     const present = fs
       .readdirSync(path.join(ROOT, "packages/plugins"), { withFileTypes: true })
       .filter((e) => e.isDirectory())
@@ -102,8 +132,38 @@ describe("FeatLock Tight-Core & Dogfooded-Plugin Structural Laws [REQ-FLK-PLUGIN
       }
     }
     expect(violations).toEqual([]);
+
+    for (const dir of REQUIRED_PLUGINS) {
+      const combined = collectFiles(`packages/plugins/${dir}`)
+        .map((f) => fs.readFileSync(path.join(ROOT, f), "utf8"))
+        .join("\n");
+      expect(combined.match(/\b(?:Plugin\.define|definePlugin)\s*\(/) !== null).toBe(true);
+    }
   });
 
+  test("built-in manifest enforces pre/post/guarded boot with zero backdoor analytics exports", () => {
+    const text = fs.readFileSync(path.join(ROOT, BUILTIN_MANIFEST), "utf8");
+    expect(text).toContain("GUARDED_PLUGIN_IDS");
+    expect(/\bpre\b/.test(text)).toBe(true);
+    expect(/\bpost\b/.test(text)).toBe(true);
+    expect(text).not.toContain("GuardAnalytics");
+  });
+
+  test("core implements replayable State.create and SDK exposes all 10 replayable domains including studio", () => {
+    const stateSrc = fs.readFileSync(path.join(ROOT, "packages/core/src/state.ts"), "utf8");
+    expect(stateSrc).toContain("transform");
+    expect(stateSrc).toContain("batch");
+    expect(stateSrc).toContain("group");
+
+    const sdkCombined = collectFiles("packages/plugin/src")
+      .map((f) => fs.readFileSync(path.join(ROOT, f), "utf8"))
+      .join("\n");
+    const missing = REQUIRED_DOMAINS.filter((d) => !new RegExp(`\\b${d}\\b`).test(sdkCombined));
+    expect(missing).toEqual([]);
+  });
+});
+
+describe("Law 9: Core Kernel Tightness Budget", () => {
   test("core kernel stays tight (<= 2500 LOC) and thin CLI shim (src/) <= 150 LOC", () => {
     const kernelLines = countLines([...collectFiles("packages/core/src"), ...collectFiles("packages/plugin/src")]);
     const cliLines = countLines(collectFiles("src"));

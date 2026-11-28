@@ -1,0 +1,11 @@
+{
+  "name": "@featlock/plugin-custom-ui-viz",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@featlock/plugin": "workspace:*"
+  }
+}

@@ -1,40 +1,34 @@
-import fs from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
-import {
-  isFeatlockPlugin,
-  type AgentPassPacket,
-  type AgentPassSpec,
-  type CheckContext,
-  type CheckHookEvent,
-  type CheckResult,
-  type CommandSpec,
-  type DomainTransformHandle,
-  type ExtractionOutput,
-  type ExtractorSpec,
-  type FeatlockPlugin,
-  type FeatlockPluginContext,
-  type FeatureRecord,
-  type FeatureTestLink,
-  type GuardSpec,
-  type GuardViolation,
-  type HarnessSpec,
-  type HostApiFacade,
-  type InvariantRecord,
-  type InvariantScannerSpec,
-  type PluginRegistration,
-  type PluginStatus,
-  type ReporterSpec,
+import type {
+  AffectedTestsResult,
+  AgentPassPacket,
+  CheckContext,
+  CheckHookEvent,
+  CheckResult,
+  ConcernSubgraphResult,
+  ExtractionOutput,
+  FeatlockStudioData,
+  FeatureRecord,
+  FeatureTestLink,
+  FenceDistribution,
+  GuardViolation,
+  HostApiFacade,
+  InvariantRecord,
+  MatrixAnalysisResult,
+  PluginStatus,
+  RegistrySnapshot,
+  RenderStudioOptions,
+  StudioRenderContext,
+  StudioTabSpec,
+  StudioThemeTokens,
+  StudioWidgetSpec,
 } from "@featlock/plugin";
 import { Registry, REGISTRY_SQL_REL } from "../db/registry.ts";
 import { discoverRepo, listStagedFiles } from "../discover.ts";
-import { State, type RegistrationGroup } from "../state.ts";
-import { getBuiltinPlugins, GuardAnalytics, GUARDED_PLUGIN_IDS } from "./internal.ts";
+import { createHostDomains, flushAllDomains, type HostDomains } from "./domains.ts";
+import { createPluginSupervisor, type PluginOperation } from "./supervisor.ts";
 
-export interface PluginOperation {
-  readonly type: "add" | "remove";
-  readonly target: string;
-}
+export type { PluginOperation };
 
 export interface PluginHostOptions {
   readonly repoDir?: string;
@@ -51,225 +45,27 @@ export interface PluginHostInstance extends HostApiFacade {
   readonly runCli: (argv: readonly string[], repoRoot?: string) => Promise<number>;
 }
 
-type SlotLifecycle =
-  | { readonly status: "active"; readonly group: RegistrationGroup | null }
-  | { readonly status: "failed"; readonly error: string };
+const EMPTY_MATRIX: MatrixAnalysisResult = {
+  scattering: { dosByFeature: {}, dofByFile: {}, highScattering: [], highTangling: [] },
+  interactions: [],
+  flags: [],
+};
 
-interface ActiveSlot {
-  readonly id: string;
-  readonly source: PluginStatus["source"];
-  readonly guarded: boolean;
-  readonly cleanups: Array<() => Promise<void> | void>;
-  lifecycle: SlotLifecycle;
-}
-
-interface CheckHookItem {
-  readonly id: string;
-  readonly name: "beforeCheck" | "afterCheck";
-  readonly handler: (event: CheckHookEvent) => void | Promise<void>;
-}
-
-interface HostDomains {
-  readonly extractors: ReturnType<typeof State.createKeyedDomain<ExtractorSpec>>;
-  readonly scanners: ReturnType<typeof State.createKeyedDomain<InvariantScannerSpec>>;
-  readonly guards: ReturnType<typeof State.createKeyedDomain<GuardSpec>>;
-  readonly passes: ReturnType<typeof State.createKeyedDomain<AgentPassSpec>>;
-  readonly harnesses: ReturnType<typeof State.createKeyedDomain<HarnessSpec>>;
-  readonly reporters: ReturnType<typeof State.createKeyedDomain<ReporterSpec>>;
-  readonly commands: ReturnType<typeof State.createKeyedDomain<CommandSpec>>;
-  readonly checkHooks: ReturnType<typeof State.createKeyedDomain<CheckHookItem>>;
-  readonly slots: Map<string, ActiveSlot>;
-  hookSeq: number;
-}
-
-function createHostDomains(): HostDomains {
-  return {
-    extractors: State.createKeyedDomain<ExtractorSpec>("extractor"),
-    scanners: State.createKeyedDomain<InvariantScannerSpec>("invariantScanner"),
-    guards: State.createKeyedDomain<GuardSpec>("guard"),
-    passes: State.createKeyedDomain<AgentPassSpec>("agentPass"),
-    harnesses: State.createKeyedDomain<HarnessSpec>("harness"),
-    reporters: State.createKeyedDomain<ReporterSpec>("reporter"),
-    commands: State.createKeyedDomain<CommandSpec>("command"),
-    checkHooks: State.createKeyedDomain<CheckHookItem>("checkHook"),
-    slots: new Map<string, ActiveSlot>(),
-    hookSeq: 0,
-  };
-}
-
-function matchesSelector(selector: string, id: string): boolean {
-  if (selector === "*") return true;
-  if (selector.endsWith(".*")) return id.startsWith(selector.slice(0, -1));
-  return selector === id;
-}
-
-async function resolveExternalPlugin(target: string): Promise<FeatlockPlugin> {
-  if (!target) throw new Error("Plugin target path is required.");
-  const abs = path.resolve(target);
-  let entryFile = abs;
-  if (fs.existsSync(abs) && fs.statSync(abs).isDirectory()) {
-    const pkgFile = path.join(abs, "package.json");
-    if (fs.existsSync(pkgFile)) {
-      const pkg = JSON.parse(fs.readFileSync(pkgFile, "utf8")) as {
-        exports?: string | Record<string, string | { default?: string; import?: string }>;
-        main?: string;
-      };
-      const dotExport = typeof pkg.exports === "string" ? pkg.exports : pkg.exports?.["."];
-      const relEntry =
-        typeof dotExport === "string"
-          ? dotExport
-          : typeof dotExport === "object" && dotExport !== null
-            ? (dotExport.import ?? dotExport.default ?? pkg.main ?? "index.ts")
-            : (pkg.main ?? "index.ts");
-      entryFile = path.resolve(abs, relEntry);
-    } else {
-      entryFile = path.join(abs, "index.ts");
-    }
+function computeFenceDistribution(invariants: readonly InvariantRecord[]): FenceDistribution {
+  const counts = { R0: 0, R1: 0, R2: 0, R3: 0, runtime: 0, none: 0, bugfixOrigin: 0, superseded: 0 };
+  for (const inv of invariants) {
+    if (inv.status === "removed") continue;
+    if (inv.supersededBy) counts.superseded += 1;
+    if (inv.originKind === "bugfix") counts.bugfixOrigin += 1;
+    const rung = inv.fenceRung ?? "none";
+    if (rung === "R0") counts.R0 += 1;
+    else if (rung === "R1") counts.R1 += 1;
+    else if (rung === "R2") counts.R2 += 1;
+    else if (rung === "R3") counts.R3 += 1;
+    else if (rung === "runtime") counts.runtime += 1;
+    else counts.none += 1;
   }
-  const mod = (await import(pathToFileURL(entryFile).href)) as { default?: unknown; plugin?: unknown };
-  const candidate = mod.default ?? mod.plugin;
-  if (!isFeatlockPlugin(candidate)) {
-    throw new Error(`Module '${target}' did not export a valid FeatLock plugin.`);
-  }
-  return candidate;
-}
-
-function makeDomainHandle<TItem extends { readonly id: string }>(
-  state: ReturnType<typeof State.createKeyedDomain<TItem>>,
-  cleanups: Array<() => Promise<void> | void>,
-): DomainTransformHandle<TItem> {
-  return {
-    transform: async (cb) => {
-      const reg = state.transform(cb);
-      cleanups.push(reg.dispose);
-      return reg;
-    },
-    reload: async () => {
-      state.reload();
-    },
-  };
-}
-
-async function disposeSlot(slot: ActiveSlot): Promise<void> {
-  for (const cleanup of slot.cleanups.toReversed()) {
-    try {
-      await cleanup();
-    } catch {
-      continue;
-    }
-  }
-  slot.cleanups.length = 0;
-}
-
-async function disposeAllSlots(domains: HostDomains): Promise<void> {
-  for (const slot of Array.from(domains.slots.values()).toReversed()) {
-    await disposeSlot(slot);
-  }
-  domains.slots.clear();
-}
-
-function buildPluginContext(
-  domains: HostDomains,
-  opts: PluginHostOptions,
-  plugin: FeatlockPlugin,
-  cleanups: Array<() => Promise<void> | void>,
-): FeatlockPluginContext {
-  return {
-    options: opts.optionsByPlugin?.[plugin.id] ?? {},
-    extractor: makeDomainHandle(domains.extractors, cleanups),
-    invariantScanner: makeDomainHandle(domains.scanners, cleanups),
-    guard: makeDomainHandle(domains.guards, cleanups),
-    agentPass: makeDomainHandle(domains.passes, cleanups),
-    harness: makeDomainHandle(domains.harnesses, cleanups),
-    reporter: makeDomainHandle(domains.reporters, cleanups),
-    command: makeDomainHandle(domains.commands, cleanups),
-    check: {
-      hook: async (name, handler): Promise<PluginRegistration> => {
-        const id = `${plugin.id}:hook:${++domains.hookSeq}`;
-        const reg = domains.checkHooks.transform((ed) => ed.add({ id, name, handler }));
-        cleanups.push(reg.dispose);
-        return reg;
-      },
-    },
-  };
-}
-
-async function mountPluginSlot(
-  domains: HostDomains,
-  opts: PluginHostOptions,
-  plugin: FeatlockPlugin,
-  source: PluginStatus["source"],
-): Promise<void> {
-  if (!plugin.id) throw new Error("Plugin id is required.");
-  const guarded = plugin.guarded === true || GUARDED_PLUGIN_IDS.has(plugin.id);
-  const cleanups: Array<() => Promise<void> | void> = [];
-  const slot: ActiveSlot = { id: plugin.id, source, guarded, cleanups, lifecycle: { status: "active", group: null } };
-  domains.slots.set(plugin.id, slot);
-  const ctx = buildPluginContext(domains, opts, plugin, cleanups);
-
-  try {
-    const { group, result } = await State.groupAsync(
-      (failure) => {
-        slot.lifecycle = {
-          status: "failed",
-          error: failure.cause instanceof Error ? failure.cause.message : String(failure.cause),
-        };
-      },
-      async () => await plugin.setup(ctx),
-    );
-    if (typeof result === "function") cleanups.push(result);
-    if (slot.lifecycle.status === "active") slot.lifecycle = { status: "active", group };
-    domains.extractors.get();
-    domains.scanners.get();
-    domains.guards.get();
-    domains.passes.get();
-    domains.harnesses.get();
-    domains.reporters.get();
-    domains.commands.get();
-    domains.checkHooks.get();
-  } catch (err) {
-    slot.lifecycle = { status: "failed", error: err instanceof Error ? err.message : String(err) };
-    await disposeSlot(slot);
-  }
-}
-
-async function activatePlugins(
-  domains: HostDomains,
-  opts: PluginHostOptions,
-  extraPlugins: readonly unknown[],
-  operations: readonly PluginOperation[],
-): Promise<void> {
-  if (!domains) throw new Error("HostDomains instance is required.");
-  await disposeAllSlots(domains);
-  const builtins = opts.includeBuiltins === false ? { pre: [], post: [] } : getBuiltinPlugins();
-  const entries: Array<{ plugin: FeatlockPlugin; source: PluginStatus["source"] }> = [
-    ...builtins.pre.map((plugin) => ({ plugin, source: "builtin" as const })),
-    ...extraPlugins.filter(isFeatlockPlugin).map((plugin) => ({ plugin, source: "inline" as const })),
-  ];
-
-  for (const op of operations) {
-    if (op.type !== "add" || entries.some((e) => e.plugin.id === op.target)) continue;
-    try {
-      entries.push({ plugin: await resolveExternalPlugin(op.target), source: "package" });
-    } catch (err) {
-      domains.slots.set(op.target, {
-        id: op.target,
-        source: "package",
-        guarded: false,
-        cleanups: [],
-        lifecycle: { status: "failed", error: err instanceof Error ? err.message : String(err) },
-      });
-    }
-  }
-
-  entries.push(...builtins.post.map((plugin) => ({ plugin, source: "builtin" as const })));
-  const removedSelectors = operations.filter((o) => o.type === "remove").map((o) => o.target);
-  const activeEntries = entries.filter((entry) => {
-    const isGuarded = entry.plugin.guarded === true || GUARDED_PLUGIN_IDS.has(entry.plugin.id);
-    if (isGuarded) return true;
-    return !removedSelectors.some((sel) => matchesSelector(sel, entry.plugin.id));
-  });
-  for (const entry of activeEntries) await mountPluginSlot(domains, opts, entry.plugin, entry.source);
+  return counts;
 }
 
 async function runExtractWithScan(
@@ -296,17 +92,13 @@ async function runExtractWithScan(
   };
 }
 
-async function runExtract(domains: HostDomains, repoDir: string): Promise<ExtractionOutput> {
-  return await runExtractWithScan(domains, discoverRepo(repoDir));
-}
-
 async function runCheck(
   domains: HostDomains,
   repoDir: string,
   checkOpts?: { readonly allowRemoval?: boolean; readonly strictDrift?: boolean },
 ): Promise<CheckResult> {
   if (!repoDir) throw new Error("repoDir is required for featlock check.");
-  const scanCtx = discoverRepo(repoDir);
+  const scanCtx = discoverRepo(repoDir, { languages: domains.languages.get() });
   const registry = Registry.readRepo(scanCtx.repoRoot);
   const liveExtraction = await runExtractWithScan(domains, scanCtx);
   const ctx: CheckContext = {
@@ -333,14 +125,145 @@ async function runCheck(
   return { ok: errors.length === 0, violations: errors, warnings, counts: Registry.count(registry) };
 }
 
-async function runBuildAgentPasses(domains: HostDomains, repoDir: string): Promise<readonly AgentPassPacket[]> {
-  const scanCtx = discoverRepo(repoDir);
-  const registry = Registry.readRepo(scanCtx.repoRoot);
-  const packets: AgentPassPacket[] = [];
-  for (const p of domains.passes.get().toSorted((a, b) => a.order - b.order)) {
-    packets.push(await p.buildPacket(scanCtx, registry));
+function runAnalyzeMatrix(domains: HostDomains, repoDir: string, preloaded?: RegistrySnapshot): MatrixAnalysisResult {
+  const scan = discoverRepo(repoDir, { languages: domains.languages.get() });
+  const reg = preloaded ?? Registry.readRepo(scan.repoRoot);
+  const provider = domains.analytics.get().find((a) => typeof a.analyzeMatrix === "function");
+  return provider?.analyzeMatrix ? provider.analyzeMatrix(scan, reg) : EMPTY_MATRIX;
+}
+
+function runAffectedTests(
+  domains: HostDomains,
+  repoDir: string,
+  affectedOpts?: { readonly range?: string; readonly changedFiles?: readonly string[] },
+): AffectedTestsResult {
+  const abs = path.resolve(repoDir);
+  const reg = Registry.readRepo(abs);
+  const provider = domains.analytics.get().find((a) => typeof a.affectedTests === "function");
+  return provider?.affectedTests
+    ? provider.affectedTests(abs, reg, affectedOpts)
+    : { changedFiles: [], affectedFeatures: [], transitiveFiles: [], prioritizedTests: [] };
+}
+
+function runConcernSubgraph(
+  domains: HostDomains,
+  repoDir: string,
+  featureId: string,
+  preloaded?: RegistrySnapshot,
+): ConcernSubgraphResult | null {
+  const abs = path.resolve(repoDir);
+  const reg = preloaded ?? Registry.readRepo(abs);
+  const feat = reg.features.find((f) => f.id === featureId);
+  if (!feat) return null;
+  const provider = domains.analytics.get().find((a) => typeof a.concernSubgraph === "function");
+  return provider?.concernSubgraph ? provider.concernSubgraph(abs, feat, reg) : null;
+}
+
+async function collectStudioDataWithDomains(
+  domains: HostDomains,
+  listPlugins: () => readonly PluginStatus[],
+  repoDir: string,
+): Promise<FeatlockStudioData> {
+  if (!repoDir) throw new Error("repoDir is required to collect studio data.");
+  flushAllDomains(domains);
+  const absRoot = path.resolve(repoDir);
+  const storedRegistry = Registry.readRepo(absRoot);
+  const hasStored = storedRegistry.features.length > 0 || storedRegistry.invariants.length > 0;
+  const registry: RegistrySnapshot = hasStored
+    ? storedRegistry
+    : { ...(await runExtractWithScan(domains, discoverRepo(absRoot, { languages: domains.languages.get() }))), relations: [], auditLog: [] };
+  const check = await runCheck(domains, absRoot);
+  const matrix = runAnalyzeMatrix(domains, absRoot, registry);
+  const concernSubgraphs: Record<string, ConcernSubgraphResult> = {};
+  for (const feat of registry.features.filter((f) => f.status === "active")) {
+    const sub = runConcernSubgraph(domains, absRoot, feat.id, registry);
+    if (sub) concernSubgraphs[feat.id] = sub;
   }
-  return packets;
+
+  let data: FeatlockStudioData = {
+    schemaVersion: 1,
+    repoName: path.basename(absRoot),
+    repoRoot: absRoot,
+    generatedAt: new Date().toISOString(),
+    counts: Registry.count(registry),
+    registry,
+    check,
+    matrix,
+    concernSubgraphs,
+    fenceDistribution: computeFenceDistribution(registry.invariants),
+    plugins: listPlugins(),
+    extensions: {},
+  };
+
+  const studioState = domains.studio.get();
+  const extensions: Record<string, unknown> = {};
+  for (const provider of studioState.dataProviders) {
+    extensions[provider.id] = await provider.provide(data);
+  }
+  data = { ...data, extensions };
+  for (const fn of studioState.payloadTransforms) data = fn(data);
+  for (const ov of studioState.uiOverrides) {
+    if (ov.transformPayload) data = ov.transformPayload(data);
+  }
+  return data;
+}
+
+function buildStudioRenderContext(
+  domains: HostDomains,
+  data: FeatlockStudioData,
+  opts?: RenderStudioOptions,
+): { readonly ctx: StudioRenderContext; readonly renderer: ReturnType<HostDomains["studio"]["get"]>["defaultRenderer"] } {
+  if (!data) throw new Error("Studio data is required to render UI.");
+  flushAllDomains(domains);
+  const st = domains.studio.get();
+  const tabs: StudioTabSpec[] = [...st.tabs];
+  const widgets: StudioWidgetSpec[] = [...st.widgets];
+  const css: string[] = [...st.css];
+  const headHtml: string[] = [...st.headHtml];
+  const clientScripts: string[] = [...st.clientScripts];
+  const theme: Record<string, string | undefined> = {};
+  let title: string | undefined;
+  let brandLabel: string | undefined;
+
+  for (const t of st.themes) Object.assign(theme, t);
+  for (const ov of st.uiOverrides) {
+    if (ov.title) title = ov.title;
+    if (ov.brandLabel) brandLabel = ov.brandLabel;
+    if (ov.theme) Object.assign(theme, ov.theme);
+    if (ov.customCss) css.push(ov.customCss);
+    if (ov.customHeadHtml) headHtml.push(ov.customHeadHtml);
+    if (ov.customClientScript) clientScripts.push(ov.customClientScript);
+    if (ov.extraTabs) tabs.push(...ov.extraTabs);
+    if (ov.extraWidgets) widgets.push(...ov.extraWidgets);
+  }
+
+  tabs.sort((a, b) => (a.order ?? 100) - (b.order ?? 100));
+  widgets.sort((a, b) => (a.order ?? 100) - (b.order ?? 100));
+  const renderer = opts?.rendererId
+    ? (st.renderers.find((r) => r.id === opts.rendererId) ?? null)
+    : (st.defaultRenderer ?? st.renderers[0] ?? null);
+
+  return {
+    renderer,
+    ctx: {
+      data,
+      tabs,
+      widgets,
+      theme: theme as StudioThemeTokens,
+      css,
+      headHtml,
+      clientScripts,
+      title,
+      brandLabel,
+      inline: opts?.inline ?? false,
+    },
+  };
+}
+
+function renderFallbackStudioHtml(ctx: StudioRenderContext): string {
+  const sections = ctx.tabs.map((t) => `<section data-tab="${t.id}"><h2>${t.label}</h2>${t.renderHtml(ctx.data)}</section>`).join("\n");
+  const widgets = ctx.widgets.map((w) => `<article data-widget="${w.id}"><h3>${w.title}</h3>${w.renderHtml(ctx.data)}</article>`).join("\n");
+  return `<!doctype html><html><head><meta charset="utf-8"/><title>${ctx.title ?? `FeatLock · ${ctx.data.repoName}`}</title><style>${ctx.css.join("\n")}</style>${ctx.headHtml.join("\n")}</head><body>${widgets}${sections}</body></html>`;
 }
 
 async function runCliCommand(
@@ -367,17 +290,16 @@ async function runCliCommand(
 export async function createPluginHost(opts: PluginHostOptions = {}): Promise<PluginHostInstance> {
   if (!opts) throw new Error("PluginHostOptions must be defined.");
   const domains = createHostDomains();
-  const list = (): readonly PluginStatus[] =>
-    Array.from(domains.slots.values()).map((s) => ({
-      id: s.id,
-      source: s.source,
-      state: s.lifecycle.status === "active" ? { status: "active" } : { status: "failed", error: s.lifecycle.error },
-      guarded: s.guarded,
-    }));
+  const supervisor = createPluginSupervisor({
+    domains,
+    includeBuiltins: opts.includeBuiltins !== false,
+    repoDir: opts.repoDir,
+    optionsByPlugin: opts.optionsByPlugin,
+  });
 
   const facade: HostApiFacade = {
-    listPlugins: list,
-    extract: (repoDir) => runExtract(domains, repoDir),
+    listPlugins: () => supervisor.list(),
+    extract: (repoDir) => runExtractWithScan(domains, discoverRepo(repoDir, { languages: domains.languages.get() })),
     check: (repoDir, checkOpts) => runCheck(domains, repoDir, checkOpts),
     sync: async (repoDir) => {
       const out = Registry.materializeDb(path.resolve(repoDir));
@@ -388,49 +310,53 @@ export async function createPluginHost(opts: PluginHostOptions = {}): Promise<Pl
     recordNew: async (input) => Registry.recordNew({ ...input, repoRoot: path.resolve(input.repoRoot) }),
     recordImprovement: async (input) => Registry.recordImprovement({ ...input, repoRoot: path.resolve(input.repoRoot) }),
     supersedeInvariant: async (input) => Registry.supersedeInvariant({ ...input, repoRoot: path.resolve(input.repoRoot) }),
-    analyzeMatrix: async (repoDir) => {
-      const scan = discoverRepo(repoDir);
-      const reg = Registry.readRepo(scan.repoRoot);
-      return {
-        scattering: GuardAnalytics.computeScatteringAndTangling(reg),
-        interactions: GuardAnalytics.computeFeatureInteractions(reg, scan.repoRoot),
-        flags: GuardAnalytics.detectFeatureFlags(scan.files, reg),
-      };
+    analyzeMatrix: async (repoDir) => runAnalyzeMatrix(domains, repoDir),
+    affectedTests: async (repoDir, affectedOpts) => runAffectedTests(domains, repoDir, affectedOpts),
+    concernSubgraph: async (repoDir, featureId) => runConcernSubgraph(domains, repoDir, featureId),
+    collectStudioData: (repoDir) => collectStudioDataWithDomains(domains, supervisor.list, repoDir),
+    renderStudio: async (repoRootOrData, renderOpts) => {
+      const data = typeof repoRootOrData === "string"
+        ? await collectStudioDataWithDomains(domains, supervisor.list, repoRootOrData)
+        : repoRootOrData;
+      const { renderer, ctx } = buildStudioRenderContext(domains, data, renderOpts);
+      if (renderOpts?.rendererId && !renderer) {
+        throw new Error(`Studio renderer '${renderOpts.rendererId}' is not registered.`);
+      }
+      return renderer ? renderer.renderHtml(ctx) : renderFallbackStudioHtml(ctx);
     },
-    affectedTests: async (repoDir, affectedOpts) => {
-      const abs = path.resolve(repoDir);
-      const reg = Registry.readRepo(abs);
-      return GuardAnalytics.selectAffectedTests(abs, reg, affectedOpts?.range, affectedOpts?.changedFiles);
-    },
-    concernSubgraph: async (repoDir, featureId) => {
-      const abs = path.resolve(repoDir);
-      const reg = Registry.readRepo(abs);
-      const feat = reg.features.find((f) => f.id === featureId);
-      if (!feat) return null;
-      return GuardAnalytics.projectConcernSubgraph(abs, feat, reg);
-    },
+    getStudioState: () => domains.studio.get(),
     writeRegistry: async (repoDir, snapshot) => {
       const sqlPath = Registry.writeSql(path.resolve(repoDir), snapshot);
       Registry.materializeDb(path.resolve(repoDir));
       return sqlPath;
     },
     readRegistry: async (repoDir) => Registry.readRepo(path.resolve(repoDir)),
-    buildAgentPasses: (repoDir) => runBuildAgentPasses(domains, repoDir),
+    buildAgentPasses: async (repoDir) => {
+      const scanCtx = discoverRepo(repoDir, { languages: domains.languages.get() });
+      const registry = Registry.readRepo(scanCtx.repoRoot);
+      const packets: AgentPassPacket[] = [];
+      for (const p of domains.passes.get().toSorted((a, b) => a.order - b.order)) {
+        packets.push(await p.buildPacket(scanCtx, registry));
+      }
+      return packets;
+    },
+    getLanguages: () => domains.languages.get(),
+    getAnalytics: () => domains.analytics.get(),
     getHarnesses: () => domains.harnesses.get(),
     getCommands: () => domains.commands.get(),
     getReporters: () => domains.reporters.get(),
   };
 
-  await activatePlugins(domains, opts, opts.plugins ?? [], opts.operations ?? []);
+  await supervisor.activate(opts.plugins ?? [], opts.operations ?? []);
   return {
     ...facade,
-    list,
-    activate: (extraPlugins, operations = []) => activatePlugins(domains, opts, extraPlugins, operations),
-    dispose: () => disposeAllSlots(domains),
+    list: () => supervisor.list(),
+    activate: (extraPlugins, operations = []) => supervisor.activate(extraPlugins, operations),
+    dispose: () => supervisor.dispose(),
     runCli: (argv, repoRoot = process.cwd()) => runCliCommand(domains, facade, argv, repoRoot),
   };
 }
 
-export const PluginHost = {
+export const PluginHost = Object.freeze({
   create: createPluginHost,
-};
+});
