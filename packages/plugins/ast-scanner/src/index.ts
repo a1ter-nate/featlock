@@ -14,6 +14,7 @@ import {
   scanFileInvariants,
   slugifyIdentifier,
 } from "./polyglot.ts";
+import { detectBugfixOriginFiles } from "./reiss.ts";
 import { buildTestIndex, resolveRootTestForFile, type TestIndex } from "./root-tests.ts";
 
 const NON_PROD_PREFIX =
@@ -118,6 +119,7 @@ function buildFeatureRecords(
   area: string,
   bucket: { prodFiles: DiscoveredFile[]; testFiles: DiscoveredFile[]; symbols: string[]; fileSymbols: Map<string, string[]> },
   testIndex: TestIndex,
+  bugfixFiles: ReadonlyMap<string, string>,
 ): ExtractionOutput {
   if (bucket.prodFiles.length === 0) return { features: [], tests: [], invariants: [] };
   const featureId = `feat.${slugifyIdentifier(area)}`;
@@ -144,6 +146,7 @@ function buildFeatureRecords(
   for (const pf of bucket.prodFiles) {
     const fileInvs = scanFileInvariants(pf, featureId);
     const fileSyms = bucket.fileSymbols.get(pf.rel) ?? [];
+    const bugfixRef = bugfixFiles.get(pf.rel);
     for (const inv of fileInvs) {
       const rootHit = resolveRootTestForFile({
         prodFile: pf,
@@ -153,7 +156,13 @@ function buildFeatureRecords(
         testIndex,
       });
       if (rootHit) addTestLink(rootHit.file, rootHit.cases);
-      invariants.push(rootHit ? { ...inv, rootTestPath: rootHit.file.rel } : inv);
+      const enriched: InvariantRecord = {
+        ...inv,
+        rootTestPath: rootHit?.file.rel ?? inv.rootTestPath,
+        originKind: bugfixRef ? "bugfix" : (inv.originKind ?? "standard"),
+        originRef: bugfixRef ?? inv.originRef,
+      };
+      invariants.push(enriched);
       if (invariants.length >= 250) break;
     }
     if (invariants.length >= 250) break;
@@ -193,9 +202,10 @@ function extractFromRepo(ctx: ScanContext): ExtractionOutput {
   const tests: FeatureTestLink[] = [];
   const invariants: InvariantRecord[] = [];
   const testIndex = buildTestIndex(ctx.files.filter((f) => f.isTest));
+  const bugfixFiles = detectBugfixOriginFiles(ctx.repoRoot);
 
   for (const [area, bucket] of [...byArea.entries()].toSorted((a, b) => a[0].localeCompare(b[0]))) {
-    const out = buildFeatureRecords(area, bucket, testIndex);
+    const out = buildFeatureRecords(area, bucket, testIndex, bugfixFiles);
     features.push(...out.features);
     tests.push(...out.tests);
     invariants.push(...out.invariants);

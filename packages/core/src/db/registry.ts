@@ -4,10 +4,13 @@ import fs from "node:fs";
 import path from "node:path";
 import type {
   FeatureRecord,
+  FeatureRelation,
   FeatureTestLink,
+  FenceRung,
   InvariantRecord,
   RegistryCounts,
   RegistrySnapshot,
+  SupersedeInvariantInput,
 } from "@featlock/plugin";
 import { countRegistry, findDuplicateFeatures, queryRegistryFeatures } from "./query.ts";
 import {
@@ -26,6 +29,7 @@ export interface RecordNewFeatureInput {
   readonly feature: FeatureRecord;
   readonly tests: readonly FeatureTestLink[];
   readonly invariants?: readonly InvariantRecord[];
+  readonly relations?: readonly FeatureRelation[];
   readonly actor?: string;
 }
 
@@ -35,7 +39,29 @@ export interface RecordImprovementInput {
   readonly summary: string;
   readonly extraTests?: readonly FeatureTestLink[];
   readonly extraInvariants?: readonly InvariantRecord[];
+  readonly extraRelations?: readonly FeatureRelation[];
+  readonly originRef?: string;
+  readonly rationale?: string;
   readonly actor?: string;
+}
+
+const FENCE_RANK: Readonly<Record<FenceRung, number>> = {
+  none: 0,
+  runtime: 1,
+  R3: 2,
+  R2: 3,
+  R1: 4,
+  R0: 5,
+};
+
+function mergeRelations(
+  existing: readonly FeatureRelation[] | undefined,
+  extra: readonly FeatureRelation[] | undefined,
+): FeatureRelation[] {
+  const map = new Map<string, FeatureRelation>();
+  for (const r of existing ?? []) map.set(`${r.fromFeatureId}|${r.relation}|${r.toFeatureId}`, r);
+  for (const r of extra ?? []) map.set(`${r.fromFeatureId}|${r.relation}|${r.toFeatureId}`, r);
+  return [...map.values()];
 }
 
 function materializeRegistryDb(repoRoot: string): {
@@ -74,7 +100,7 @@ function writeRegistrySql(repoRoot: string, snapshot: RegistrySnapshot): string 
 function readRepoRegistry(repoRoot: string): RegistrySnapshot {
   const sqlPath = path.join(repoRoot, REGISTRY_SQL_REL);
   if (!fs.existsSync(sqlPath)) {
-    return { features: [], tests: [], invariants: [], auditLog: [] };
+    return { features: [], tests: [], invariants: [], relations: [], auditLog: [] };
   }
   return loadSnapshotFromSql(fs.readFileSync(sqlPath, "utf8"));
 }
@@ -98,6 +124,7 @@ function recordNewFeature(input: RecordNewFeatureInput): RegistrySnapshot {
     features: [...current.features.filter((f) => f.id !== input.feature.id), input.feature],
     tests: [...current.tests, ...input.tests],
     invariants: [...current.invariants, ...(input.invariants ?? [])],
+    relations: mergeRelations(current.relations, input.relations),
     auditLog: [
       ...current.auditLog,
       { featureId: input.feature.id, action: "added", actor: input.actor ?? "agent", summary: input.feature.summary },
@@ -114,11 +141,17 @@ function recordFeatureImprovement(input: RecordImprovementInput): RegistrySnapsh
   if (!target) {
     throw new Error(`Feature '${input.featureId}' does not exist in ${REGISTRY_SQL_REL}. Use record-new instead.`);
   }
-  const updated: FeatureRecord = { ...target, summary: `${target.summary} | ${input.summary}` };
+  const updated: FeatureRecord = {
+    ...target,
+    summary: `${target.summary} | ${input.summary}`,
+    originRef: input.originRef ?? target.originRef,
+    rationale: input.rationale ?? target.rationale,
+  };
   const next: RegistrySnapshot = {
     features: current.features.map((f) => (f.id === input.featureId ? updated : f)),
     tests: [...current.tests, ...(input.extraTests ?? [])],
     invariants: [...current.invariants, ...(input.extraInvariants ?? [])],
+    relations: mergeRelations(current.relations, input.extraRelations),
     auditLog: [
       ...current.auditLog,
       { featureId: input.featureId, action: "improved", actor: input.actor ?? "agent", summary: input.summary },
@@ -129,12 +162,50 @@ function recordFeatureImprovement(input: RecordImprovementInput): RegistrySnapsh
   return next;
 }
 
+function supersedeInvariant(input: SupersedeInvariantInput): RegistrySnapshot {
+  if (!input.invariantId || !input.supersededBy) {
+    throw new Error("invariantId and supersededBy are required for supersession.");
+  }
+  const current = readRepoRegistry(input.repoRoot);
+  const target = current.invariants.find((i) => i.id === input.invariantId);
+  if (!target) {
+    throw new Error(`Invariant '${input.invariantId}' does not exist in ${REGISTRY_SQL_REL}.`);
+  }
+  const prevRung: FenceRung = target.fenceRung ?? "runtime";
+  const nextRung: FenceRung = input.fenceRung ?? (input.supersededBy === "type-boundary" ? "R1" : prevRung);
+  if (FENCE_RANK[nextRung] < FENCE_RANK[prevRung]) {
+    throw new Error(`Cannot downgrade fence rung from '${prevRung}' to '${nextRung}' during supersession.`);
+  }
+  const updated: InvariantRecord = {
+    ...target,
+    supersededBy: input.supersededBy,
+    fenceRung: nextRung,
+    rationale: input.rationale ?? target.rationale ?? `Superseded by ${input.supersededBy}`,
+  };
+  const next: RegistrySnapshot = {
+    ...current,
+    invariants: current.invariants.map((i) => (i.id === input.invariantId ? updated : i)),
+    auditLog: [
+      ...current.auditLog,
+      {
+        featureId: target.featureId,
+        action: "superseded",
+        actor: input.actor ?? "agent",
+        summary: `Superseded '${input.invariantId}' -> '${input.supersededBy}' (${prevRung} -> ${nextRung})${input.rationale ? `: ${input.rationale}` : ""}`,
+      },
+    ],
+  };
+  writeRegistrySql(input.repoRoot, next);
+  materializeRegistryDb(input.repoRoot);
+  return next;
+}
+
 export const Registry = {
-  sqlRel: REGISTRY_SQL_REL,
-  dbRel: REGISTRY_DB_REL,
+  SCHEMA_SQL,
+  REGISTRY_SQL_REL,
+  REGISTRY_DB_REL,
   serializeSql: serializeRegistrySql,
   loadFromSql: loadSnapshotFromSql,
-  readFromDb: readSnapshotFromDb,
   materializeDb: materializeRegistryDb,
   writeSql: writeRegistrySql,
   readRepo: readRepoRegistry,
@@ -144,4 +215,5 @@ export const Registry = {
   findDuplicates: findDuplicateFeatures,
   recordNew: recordNewFeature,
   recordImprovement: recordFeatureImprovement,
+  supersedeInvariant,
 };

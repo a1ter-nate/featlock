@@ -9,13 +9,13 @@ function buildPass1Inventory(ctx: ScanContext, registry: RegistrySnapshot): Agen
     objective: "Identify every user-facing and system-level product capability from routes, CLI commands, exported APIs, jobs, and docs without duplicating existing features.",
     instructions: [
       `Already registered areas (${registeredAreas.size}): ${[...registeredAreas].toSorted().join(", ") || "none"}.`,
-      "Run 'featlock check-dup <description>' before proposing any new feature.",
+      "Run 'featlock check-dup <description>' (BM25 + identifier-split) before proposing any new feature.",
+      "Capture Pre-RS provenance (--origin-ref, --rationale) and cross-feature relations (--requires, --excludes, --parent).",
       "Ignore internal scaffolding; focus on observable behaviors users or downstream callers depend on.",
-      "Record each new feature with concrete acceptance criteria and source evidence.",
     ],
     targets: prodFiles.slice(0, 60),
     outputSchema: {
-      features: [{ id: "feat.<area>.<slug>", area: "string", name: "string", summary: "string", acceptanceCriteria: "string" }],
+      features: [{ id: "feat.<area>.<slug>", area: "string", name: "string", summary: "string", acceptanceCriteria: "string", originRef: "optional-uri", rationale: "optional-why" }],
     },
   };
 }
@@ -28,12 +28,12 @@ function buildPass2TestBinding(ctx: ScanContext, registry: RegistrySnapshot): Ag
     .map((f) => f.id);
   return {
     passId: "pass-2-test-binding",
-    title: "Pass 2: Feature-to-Test Traceability Binding",
-    objective: "Bind every active feature to real, non-skipped tests (R0-R8) and surface untested feature gaps.",
+    title: "Pass 2: Feature-to-Test Traceability & Pairwise Interaction Binding",
+    objective: "Bind every active feature to real, non-skipped tests (R0-R8) and close pairwise (t=2) feature-interaction test gaps.",
     instructions: [
       `Active features lacking linked tests (${untestedFeatures.length}): ${untestedFeatures.join(", ") || "none"}.`,
       `Unlinked test files (${unlinkedTests.length}): inspect and bind to matching features.`,
-      "Verify each linked test actually exercises the real behavior (not mocked theater).",
+      "Run 'featlock matrix --json' to locate interacting feature pairs that lack a shared pairwise integration test.",
     ],
     targets: unlinkedTests.slice(0, 60),
     outputSchema: {
@@ -43,35 +43,39 @@ function buildPass2TestBinding(ctx: ScanContext, registry: RegistrySnapshot): Ag
 }
 
 function buildPass3InvariantMining(ctx: ScanContext, registry: RegistrySnapshot): AgentPassPacket {
-  const invCount = registry.invariants.filter((i) => i.status === "active").length;
+  const activeInvs = registry.invariants.filter((i) => i.status === "active");
+  const unguarded = activeInvs.filter((i) => i.fenceRung === "none").map((i) => i.id);
+  const bugfixCount = activeInvs.filter((i) => i.originKind === "bugfix").length;
   const criticalFiles = ctx.files
     .filter((f) => !f.isTest && /(?:guard|policy|state|machine|schema|auth|billing|payment|registry|pipeline|router|contract)/i.test(f.rel))
     .map((f) => f.rel);
   return {
     passId: "pass-3-invariant-mining",
-    title: "Pass 3: Deep Invariant Mining (AST + RepoSpec + Veristack + Agent)",
-    objective: "Discover hidden behavioral, state-machine, ordering, permission, and persistence invariants that must never regress.",
+    title: "Pass 3: Deep Invariant Mining, Fence Rungs & Type Promotion",
+    objective: "Discover hidden behavioral, state-machine, ordering, permission, and persistence invariants, tag each fence_rung honestly, and promote weak guards toward R0/R1.",
     instructions: [
-      `Currently locked active invariants: ${invCount}.`,
-      "Cross-check RepoSpec graphs/SQL rules and Veristack state-machine/law checks with deep code reading.",
-      "For each invariant, state the exact condition that MUST ALWAYS HOLD, exact file:line, and the deterministic guard/test enforcing it.",
-      "Prioritize fail-closed guards, monotonic state transitions, idempotency, anti-deletion locks, and wire-protocol parity.",
+      `Currently locked active invariants: ${activeInvs.length} (bugfix-origin: ${bugfixCount}, No fence yet: ${unguarded.length}).`,
+      unguarded.length > 0 ? `Invariants with 'No fence yet' (fence_rung=none): ${unguarded.slice(0, 10).join(", ")}.` : "Zero active invariants are left prose-only ('No fence yet').",
+      "Tag every invariant with fence_rung (R0|R1|R2|R3|runtime|none); never pretend prose is a fence — report 'No fence yet' honestly.",
+      "When simplifying code via uncomplect / 'Parse, Don't Validate', promote runtime guards to R1 types or R0 lints using 'featlock supersede --id <inv> --by type-boundary --rung R1'.",
     ],
     targets: (criticalFiles.length > 0 ? criticalFiles : ctx.files.filter((f) => !f.isTest).map((f) => f.rel)).slice(0, 60),
     outputSchema: {
-      invariants: [{ id: "inv:agent:<slug>", featureId: "string", kind: "string", statement: "string", file: "string", line: 1, confidence: 0.9 }],
+      invariants: [{ id: "inv:agent:<slug>", featureId: "string", kind: "string", statement: "string", file: "string", line: 1, fenceRung: "R0|R1|R2|R3|runtime|none", confidence: 0.9 }],
     },
   };
 }
 
 function buildPass4RegressionAudit(ctx: ScanContext, registry: RegistrySnapshot): AgentPassPacket {
+  const relCount = (registry.relations ?? []).length;
   return {
     passId: "pass-4-regression-guard-audit",
-    title: "Pass 4: Regression & Anti-Deletion Guard Verification",
-    objective: "Audit all registered features and invariants for drift, duplicate capabilities, or weakened tests before shipping.",
+    title: "Pass 4: Regression, Scattering/Tangling & Anti-Deletion Audit",
+    objective: "Audit registered features, relations, fence monotonicity, DoS/DoF scattering, and pairwise interaction gaps before shipping.",
     instructions: [
-      `Audit ${registry.features.length} features, ${registry.tests.length} test links, and ${registry.invariants.length} invariants.`,
-      "Run 'featlock check .' and confirm 0 error violations.",
+      `Audit ${registry.features.length} features, ${registry.tests.length} test links, ${registry.invariants.length} invariants, and ${relCount} feature relations.`,
+      "Run 'featlock check .' and confirm 0 error violations (including zero fence downgrades or broken requires/excludes relations).",
+      "Run 'featlock affected-tests' to run prioritized regression tests for touched files, and 'featlock matrix' to review DoS/DoF and feature flags.",
       "Confirm agent hooks ('featlock hooks status') and CI gates are wired so future agents cannot silently drop features.",
     ],
     targets: ["features/registry.sql", ...ctx.allRelPaths.filter((p) => /(?:AGENTS\.md|copilot-instructions\.md|rungs\.json)/i.test(p))],

@@ -1,5 +1,11 @@
 import { Database } from "bun:sqlite";
-import type { RegistrySnapshot } from "@featlock/plugin";
+import type {
+  FeatureRelation,
+  FeatureRelationKind,
+  FenceRung,
+  InvariantOriginKind,
+  RegistrySnapshot,
+} from "@featlock/plugin";
 
 export const REGISTRY_SQL_REL = "features/registry.sql";
 export const REGISTRY_DB_REL = ".featlock/registry.sqlite";
@@ -14,7 +20,9 @@ CREATE TABLE IF NOT EXISTS features (
   status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','deprecated','removed')),
   source TEXT NOT NULL DEFAULT 'manual',
   adr_ref TEXT,
-  removal_reason TEXT
+  removal_reason TEXT,
+  origin_ref TEXT,
+  rationale TEXT
 );
 
 CREATE TABLE IF NOT EXISTS feature_tests (
@@ -37,13 +45,27 @@ CREATE TABLE IF NOT EXISTS invariants (
   guard_ref TEXT,
   guard_anchor TEXT,
   root_test_path TEXT,
+  fence_rung TEXT DEFAULT 'runtime',
+  superseded_by TEXT,
+  enclosing_symbol TEXT,
+  ast_fingerprint TEXT,
+  origin_kind TEXT DEFAULT 'standard',
+  origin_ref TEXT,
+  rationale TEXT,
   status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','deprecated','removed'))
+);
+
+CREATE TABLE IF NOT EXISTS feature_relations (
+  from_feature_id TEXT NOT NULL REFERENCES features(id),
+  to_feature_id TEXT NOT NULL REFERENCES features(id),
+  relation TEXT NOT NULL CHECK(relation IN ('requires','excludes','parent_of')),
+  PRIMARY KEY (from_feature_id, to_feature_id, relation)
 );
 
 CREATE TABLE IF NOT EXISTS feature_audit_log (
   seq INTEGER PRIMARY KEY AUTOINCREMENT,
   feature_id TEXT NOT NULL,
-  action TEXT NOT NULL CHECK(action IN ('added','improved','invariant_added','deprecated','removed')),
+  action TEXT NOT NULL CHECK(action IN ('added','improved','invariant_added','superseded','deprecated','removed')),
   actor TEXT NOT NULL,
   summary TEXT NOT NULL,
   commit_sha TEXT
@@ -76,13 +98,28 @@ function sqlQuote(value: string | undefined | null): string {
   return `'${value.replaceAll("'", "''")}'`;
 }
 
+function parseFenceRung(raw: unknown): FenceRung | undefined {
+  if (raw === "R0" || raw === "R1" || raw === "R2" || raw === "R3" || raw === "runtime" || raw === "none") return raw;
+  return undefined;
+}
+
+function parseOriginKind(raw: unknown): InvariantOriginKind | undefined {
+  if (raw === "standard" || raw === "bugfix") return raw;
+  return undefined;
+}
+
+function parseRelationKind(raw: unknown): FeatureRelationKind {
+  if (raw === "excludes" || raw === "parent_of") return raw;
+  return "requires";
+}
+
 export function serializeRegistrySql(snapshot: RegistrySnapshot): string {
   if (!snapshot) throw new Error("RegistrySnapshot is required.");
   const lines: string[] = [SCHEMA_SQL, ""];
   const sortedFeatures = snapshot.features.toSorted((a, b) => a.id.localeCompare(b.id));
   for (const f of sortedFeatures) {
     lines.push(
-      `INSERT OR REPLACE INTO features (id, area, name, summary, acceptance_criteria, status, source, adr_ref, removal_reason) VALUES (${sqlQuote(f.id)}, ${sqlQuote(f.area)}, ${sqlQuote(f.name)}, ${sqlQuote(f.summary)}, ${sqlQuote(f.acceptanceCriteria)}, ${sqlQuote(f.status)}, ${sqlQuote(f.source)}, ${sqlQuote(f.adrRef)}, ${sqlQuote(f.removalReason)});`,
+      `INSERT OR REPLACE INTO features (id, area, name, summary, acceptance_criteria, status, source, adr_ref, removal_reason, origin_ref, rationale) VALUES (${sqlQuote(f.id)}, ${sqlQuote(f.area)}, ${sqlQuote(f.name)}, ${sqlQuote(f.summary)}, ${sqlQuote(f.acceptanceCriteria)}, ${sqlQuote(f.status)}, ${sqlQuote(f.source)}, ${sqlQuote(f.adrRef)}, ${sqlQuote(f.removalReason)}, ${sqlQuote(f.originRef)}, ${sqlQuote(f.rationale)});`,
     );
   }
   const sortedTests = snapshot.tests.toSorted((a, b) =>
@@ -96,7 +133,15 @@ export function serializeRegistrySql(snapshot: RegistrySnapshot): string {
   const sortedInvariants = snapshot.invariants.toSorted((a, b) => a.id.localeCompare(b.id));
   for (const inv of sortedInvariants) {
     lines.push(
-      `INSERT OR REPLACE INTO invariants (id, feature_id, kind, statement, file, line, confidence, source, guard_ref, guard_anchor, root_test_path, status) VALUES (${sqlQuote(inv.id)}, ${sqlQuote(inv.featureId)}, ${sqlQuote(inv.kind)}, ${sqlQuote(inv.statement)}, ${sqlQuote(inv.file)}, ${Math.max(1, Math.floor(inv.line))}, ${Number(inv.confidence.toFixed(3))}, ${sqlQuote(inv.source)}, ${sqlQuote(inv.guardRef)}, ${sqlQuote(inv.guardAnchor)}, ${sqlQuote(inv.rootTestPath)}, ${sqlQuote(inv.status)});`,
+      `INSERT OR REPLACE INTO invariants (id, feature_id, kind, statement, file, line, confidence, source, guard_ref, guard_anchor, root_test_path, fence_rung, superseded_by, enclosing_symbol, ast_fingerprint, origin_kind, origin_ref, rationale, status) VALUES (${sqlQuote(inv.id)}, ${sqlQuote(inv.featureId)}, ${sqlQuote(inv.kind)}, ${sqlQuote(inv.statement)}, ${sqlQuote(inv.file)}, ${Math.max(1, Math.floor(inv.line))}, ${Number(inv.confidence.toFixed(3))}, ${sqlQuote(inv.source)}, ${sqlQuote(inv.guardRef)}, ${sqlQuote(inv.guardAnchor)}, ${sqlQuote(inv.rootTestPath)}, ${sqlQuote(inv.fenceRung ?? "runtime")}, ${sqlQuote(inv.supersededBy)}, ${sqlQuote(inv.enclosingSymbol)}, ${sqlQuote(inv.astFingerprint)}, ${sqlQuote(inv.originKind ?? "standard")}, ${sqlQuote(inv.originRef)}, ${sqlQuote(inv.rationale)}, ${sqlQuote(inv.status)});`,
+    );
+  }
+  const sortedRelations = (snapshot.relations ?? []).toSorted((a, b) =>
+    `${a.fromFeatureId}:${a.relation}:${a.toFeatureId}`.localeCompare(`${b.fromFeatureId}:${b.relation}:${b.toFeatureId}`),
+  );
+  for (const rel of sortedRelations) {
+    lines.push(
+      `INSERT OR REPLACE INTO feature_relations (from_feature_id, to_feature_id, relation) VALUES (${sqlQuote(rel.fromFeatureId)}, ${sqlQuote(rel.toFeatureId)}, ${sqlQuote(rel.relation)});`,
     );
   }
   for (const log of snapshot.auditLog) {
@@ -107,29 +152,82 @@ export function serializeRegistrySql(snapshot: RegistrySnapshot): string {
   return `${lines.join("\n")}\n`;
 }
 
-function ensureInvariantColumns(db: Database): void {
-  const cols = new Set(
-    (db.query("PRAGMA table_info(invariants)").all() as Array<{ name: string }>).map((c) => c.name),
+function ensureTableColumns(db: Database, table: string, required: ReadonlyArray<readonly [string, string]>): void {
+  const cols = new Set((db.query(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((c) => c.name));
+  for (const [col, def] of required) {
+    if (!cols.has(col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def};`);
+  }
+}
+
+function ensureSchemaUpgraded(db: Database): void {
+  ensureTableColumns(db, "features", [
+    ["origin_ref", "TEXT"],
+    ["rationale", "TEXT"],
+  ]);
+  ensureTableColumns(db, "invariants", [
+    ["guard_anchor", "TEXT"],
+    ["root_test_path", "TEXT"],
+    ["fence_rung", "TEXT DEFAULT 'runtime'"],
+    ["superseded_by", "TEXT"],
+    ["enclosing_symbol", "TEXT"],
+    ["ast_fingerprint", "TEXT"],
+    ["origin_kind", "TEXT DEFAULT 'standard'"],
+    ["origin_ref", "TEXT"],
+    ["rationale", "TEXT"],
+  ]);
+  db.exec(
+    "CREATE TABLE IF NOT EXISTS feature_relations (from_feature_id TEXT NOT NULL REFERENCES features(id), to_feature_id TEXT NOT NULL REFERENCES features(id), relation TEXT NOT NULL CHECK(relation IN ('requires','excludes','parent_of')), PRIMARY KEY (from_feature_id, to_feature_id, relation));",
   );
-  if (!cols.has("guard_anchor")) db.exec("ALTER TABLE invariants ADD COLUMN guard_anchor TEXT;");
-  if (!cols.has("root_test_path")) db.exec("ALTER TABLE invariants ADD COLUMN root_test_path TEXT;");
+}
+
+function mapInvariantRow(r: Record<string, unknown>): RegistrySnapshot["invariants"][number] {
+  return {
+    id: String(r.id ?? ""),
+    featureId: String(r.feature_id ?? ""),
+    kind: String(r.kind ?? ""),
+    statement: String(r.statement ?? ""),
+    file: String(r.file ?? ""),
+    line: Number(r.line ?? 1),
+    confidence: Number(r.confidence ?? 1),
+    source: String(r.source ?? "ast"),
+    guardRef: typeof r.guard_ref === "string" ? r.guard_ref : undefined,
+    guardAnchor: typeof r.guard_anchor === "string" ? r.guard_anchor : undefined,
+    rootTestPath: typeof r.root_test_path === "string" ? r.root_test_path : undefined,
+    fenceRung: parseFenceRung(r.fence_rung),
+    supersededBy: typeof r.superseded_by === "string" ? r.superseded_by : undefined,
+    enclosingSymbol: typeof r.enclosing_symbol === "string" ? r.enclosing_symbol : undefined,
+    astFingerprint: typeof r.ast_fingerprint === "string" ? r.ast_fingerprint : undefined,
+    originKind: parseOriginKind(r.origin_kind),
+    originRef: typeof r.origin_ref === "string" ? r.origin_ref : undefined,
+    rationale: typeof r.rationale === "string" ? r.rationale : undefined,
+    status: r.status === "deprecated" || r.status === "removed" ? r.status : "active",
+  };
 }
 
 export function readSnapshotFromDb(db: Database): RegistrySnapshot {
   if (!db) throw new Error("SQLite Database instance is required.");
-  ensureInvariantColumns(db);
+  ensureSchemaUpgraded(db);
   const fRows = db
-    .query("SELECT id, area, name, summary, acceptance_criteria, status, source, adr_ref, removal_reason FROM features ORDER BY id")
+    .query("SELECT id, area, name, summary, acceptance_criteria, status, source, adr_ref, removal_reason, origin_ref, rationale FROM features ORDER BY id")
     .all() as Array<Record<string, unknown>>;
   const tRows = db
     .query("SELECT feature_id, test_path, test_pattern, rung FROM feature_tests ORDER BY feature_id, test_path, test_pattern")
     .all() as Array<Record<string, unknown>>;
   const iRows = db
-    .query("SELECT id, feature_id, kind, statement, file, line, confidence, source, guard_ref, guard_anchor, root_test_path, status FROM invariants ORDER BY id")
+    .query("SELECT id, feature_id, kind, statement, file, line, confidence, source, guard_ref, guard_anchor, root_test_path, fence_rung, superseded_by, enclosing_symbol, ast_fingerprint, origin_kind, origin_ref, rationale, status FROM invariants ORDER BY id")
+    .all() as Array<Record<string, unknown>>;
+  const rRows = db
+    .query("SELECT from_feature_id, to_feature_id, relation FROM feature_relations ORDER BY from_feature_id, relation, to_feature_id")
     .all() as Array<Record<string, unknown>>;
   const aRows = db
     .query("SELECT feature_id, action, actor, summary, commit_sha FROM feature_audit_log ORDER BY seq")
     .all() as Array<Record<string, unknown>>;
+
+  const relations: FeatureRelation[] = rRows.map((r) => ({
+    fromFeatureId: String(r.from_feature_id ?? ""),
+    toFeatureId: String(r.to_feature_id ?? ""),
+    relation: parseRelationKind(r.relation),
+  }));
 
   return {
     features: fRows.map((r) => ({
@@ -142,6 +240,8 @@ export function readSnapshotFromDb(db: Database): RegistrySnapshot {
       source: String(r.source ?? "manual"),
       adrRef: typeof r.adr_ref === "string" ? r.adr_ref : undefined,
       removalReason: typeof r.removal_reason === "string" ? r.removal_reason : undefined,
+      originRef: typeof r.origin_ref === "string" ? r.origin_ref : undefined,
+      rationale: typeof r.rationale === "string" ? r.rationale : undefined,
     })),
     tests: tRows.map((r) => ({
       featureId: String(r.feature_id ?? ""),
@@ -149,24 +249,16 @@ export function readSnapshotFromDb(db: Database): RegistrySnapshot {
       testPattern: String(r.test_pattern ?? ""),
       rung: String(r.rung ?? "R2"),
     })),
-    invariants: iRows.map((r) => ({
-      id: String(r.id ?? ""),
-      featureId: String(r.feature_id ?? ""),
-      kind: String(r.kind ?? ""),
-      statement: String(r.statement ?? ""),
-      file: String(r.file ?? ""),
-      line: Number(r.line ?? 1),
-      confidence: Number(r.confidence ?? 1),
-      source: String(r.source ?? "ast"),
-      guardRef: typeof r.guard_ref === "string" ? r.guard_ref : undefined,
-      guardAnchor: typeof r.guard_anchor === "string" ? r.guard_anchor : undefined,
-      rootTestPath: typeof r.root_test_path === "string" ? r.root_test_path : undefined,
-      status: r.status === "deprecated" || r.status === "removed" ? r.status : "active",
-    })),
+    invariants: iRows.map(mapInvariantRow),
+    relations,
     auditLog: aRows.map((r) => ({
       featureId: String(r.feature_id ?? ""),
       action:
-        r.action === "improved" || r.action === "invariant_added" || r.action === "deprecated" || r.action === "removed"
+        r.action === "improved" ||
+        r.action === "invariant_added" ||
+        r.action === "superseded" ||
+        r.action === "deprecated" ||
+        r.action === "removed"
           ? r.action
           : "added",
       actor: String(r.actor ?? "agent"),

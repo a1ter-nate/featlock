@@ -1,6 +1,7 @@
 import { parseSync } from "oxc-parser";
-import type { DiscoveredFile, InvariantRecord } from "@featlock/plugin";
+import type { DiscoveredFile, FenceRung, InvariantRecord } from "@featlock/plugin";
 import { maskSourceForGuards } from "./lexical.ts";
+import { computeAstFingerprint, findEnclosingSymbol } from "./reiss.ts";
 
 const TS_JS_EXTS = new Set([".ts", ".tsx", ".mts", ".js", ".mjs"]);
 
@@ -118,6 +119,7 @@ interface InvariantInput {
   readonly statement: string;
   readonly guardAnchor: string;
   readonly suffix: string;
+  readonly fenceRung?: FenceRung;
 }
 
 function makeInv(input: InvariantInput): InvariantRecord {
@@ -132,6 +134,9 @@ function makeInv(input: InvariantInput): InvariantRecord {
     confidence: input.confidence,
     source: "ast",
     guardAnchor: anchor,
+    fenceRung: input.fenceRung ?? (input.kind === "db-trigger-guard" ? "R0" : "runtime"),
+    astFingerprint: computeAstFingerprint(anchor),
+    originKind: "standard",
     status: "active",
   };
 }
@@ -257,7 +262,8 @@ export function scanFileInvariants(file: DiscoveredFile, featureId: string): Inv
     const inv = matchPolyglotLine(file, featureId, scan, i);
     if (inv && !seenIds.has(inv.id)) {
       seenIds.add(inv.id);
-      found.push(inv);
+      const enclosingSymbol = findEnclosingSymbol(rawLines, i, file.ext);
+      found.push(enclosingSymbol ? { ...inv, enclosingSymbol } : inv);
     }
   }
   if (found.length <= 24) return found;

@@ -1,6 +1,25 @@
 import fs from "node:fs";
 import path from "node:path";
 import { Plugin, type CheckContext, type GuardViolation } from "@featlock/plugin";
+import {
+  checkFeatureRelations,
+  computeFeatureInteractions,
+  computeScatteringAndTangling,
+  detectFeatureFlags,
+  fenceStrength,
+} from "./analytics.ts";
+import { projectConcernSubgraph, selectAffectedTests } from "./impact.ts";
+import { matchesMultiSignalAnchor } from "./reiss-match.ts";
+
+export const GuardAnalytics = {
+  fenceStrength,
+  checkFeatureRelations,
+  computeScatteringAndTangling,
+  computeFeatureInteractions,
+  detectFeatureFlags,
+  projectConcernSubgraph,
+  selectAffectedTests,
+};
 
 const SKIPPED_TEST_RE = /^\s*(?:test|it|describe)\.(?:skip|todo)\s*\(/m;
 
@@ -57,49 +76,54 @@ function checkActiveFeatureCoverage(ctx: CheckContext): GuardViolation[] {
   return violations;
 }
 
+function checkInvariantAnchor(
+  inv: CheckContext["registry"]["invariants"][number],
+  rawContent: string,
+  allowRemoval: boolean,
+): GuardViolation | null {
+  if (!inv.guardAnchor || allowRemoval) return null;
+  const normAnchor = normalizeWhitespace(inv.guardAnchor);
+  if (normAnchor.length === 0) return null;
+  const exactHit = normalizeWhitespace(rawContent).includes(normAnchor);
+  if (exactHit || matchesMultiSignalAnchor(inv, rawContent)) return null;
+  const rootHint = inv.rootTestPath ? ` (root test: ${inv.rootTestPath})` : "";
+  const bugTag = inv.originKind === "bugfix" ? " [BUGFIX-ORIGIN]" : "";
+  return {
+    id: `FLK:dropped-guard:${inv.id}`,
+    rule: "invariant-guard-dropped-in-code",
+    severity: "error",
+    featureId: inv.featureId,
+    file: inv.file,
+    message: `BLOCKED${bugTag}: Active invariant '${inv.id}' guard disappeared from '${inv.file}'${rootHint}: expected '${normAnchor}'.`,
+    fix: `Restore the guard in '${inv.file}', promote it via 'featlock supersede --id ${inv.id} --by type-boundary --rung R1', or retire with ADR + ALLOW_FEATURE_REMOVAL=1.`,
+  };
+}
+
 function checkInvariantLiveness(ctx: CheckContext): GuardViolation[] {
   if (!ctx.repoRoot) throw new Error("CheckContext.repoRoot is required.");
   const violations: GuardViolation[] = [];
-  const fileNormCache = new Map<string, string>();
-  const readNormalized = (rel: string): string | null => {
-    const cached: string | undefined = fileNormCache.get(rel);
+  const rawCache = new Map<string, string | null>();
+  const readRaw = (rel: string): string | null => {
+    const cached: string | null | undefined = rawCache.get(rel);
     if (cached !== undefined) return cached;
     const abs = path.join(ctx.repoRoot, rel);
-    if (!fs.existsSync(abs)) return null;
-    const norm = normalizeWhitespace(fs.readFileSync(abs, "utf8"));
-    fileNormCache.set(rel, norm);
-    return norm;
+    const val = fs.existsSync(abs) ? fs.readFileSync(abs, "utf8") : null;
+    rawCache.set(rel, val);
+    return val;
   };
 
   for (const inv of ctx.registry.invariants) {
     if (inv.status !== "active") continue;
-    const normContent = readNormalized(inv.file);
-    if (normContent === null) {
+    if (inv.fenceRung === "none") {
       violations.push({
-        id: `FLK:orphan-invariant:${inv.id}`,
-        rule: "invariant-target-must-exist",
-        severity: "error",
+        id: `FLK:no-fence:${inv.id}`,
+        rule: "invariant-no-fence-yet",
+        severity: "warn",
         featureId: inv.featureId,
         file: inv.file,
-        message: `Active invariant '${inv.id}' points to missing file '${inv.file}'.`,
-        fix: "Restore the guarded file or migrate the invariant to its new home with an audit entry.",
+        message: `No fence yet: Active invariant '${inv.id}' has fence_rung='none' (prose-only).`,
+        fix: `Promote '${inv.id}' to an R0/R1/R2/runtime fence via 'featlock supersede --id ${inv.id} --by <guard> --rung R1'.`,
       });
-      continue;
-    }
-    if (inv.guardAnchor && !ctx.allowRemoval) {
-      const normAnchor = normalizeWhitespace(inv.guardAnchor);
-      if (normAnchor.length > 0 && !normContent.includes(normAnchor)) {
-        const rootHint = inv.rootTestPath ? ` (root test: ${inv.rootTestPath})` : "";
-        violations.push({
-          id: `FLK:dropped-guard:${inv.id}`,
-          rule: "invariant-guard-dropped-in-code",
-          severity: "error",
-          featureId: inv.featureId,
-          file: inv.file,
-          message: `BLOCKED: Active invariant '${inv.id}' guard disappeared from '${inv.file}'${rootHint}: expected '${normAnchor}'.`,
-          fix: `Restore the guard in '${inv.file}'${inv.rootTestPath ? ` and verify '${inv.rootTestPath}'` : ""}, or formally retire the invariant with an ADR + ALLOW_FEATURE_REMOVAL=1.`,
-        });
-      }
     }
     if (inv.rootTestPath && !fs.existsSync(path.join(ctx.repoRoot, inv.rootTestPath))) {
       violations.push({
@@ -112,6 +136,56 @@ function checkInvariantLiveness(ctx: CheckContext): GuardViolation[] {
         fix: `Restore '${inv.rootTestPath}' or re-bind the invariant to a live root test.`,
       });
     }
+    if (inv.supersededBy) continue;
+    const rawContent = readRaw(inv.file);
+    if (rawContent === null) {
+      violations.push({
+        id: `FLK:orphan-invariant:${inv.id}`,
+        rule: "invariant-target-must-exist",
+        severity: "error",
+        featureId: inv.featureId,
+        file: inv.file,
+        message: `Active invariant '${inv.id}' points to missing file '${inv.file}'.`,
+        fix: "Restore the guarded file or migrate the invariant with 'featlock supersede'.",
+      });
+      continue;
+    }
+    const anchorViolation = checkInvariantAnchor(inv, rawContent, ctx.allowRemoval);
+    if (anchorViolation) violations.push(anchorViolation);
+  }
+  return violations;
+}
+
+function checkGitInvariantDiff(ctx: CheckContext): GuardViolation[] {
+  if (!ctx.previousRegistry) return [];
+  const violations: GuardViolation[] = [];
+  const currentInvById = new Map(ctx.registry.invariants.map((i) => [i.id, i]));
+  for (const prevInv of ctx.previousRegistry.invariants) {
+    if (prevInv.status !== "active") continue;
+    const curInv = currentInvById.get(prevInv.id);
+    if (!curInv || (curInv.status === "removed" && !ctx.allowRemoval)) {
+      violations.push({
+        id: `FLK:invariant-deleted:${prevInv.id}`,
+        rule: "no-silent-invariant-deletion",
+        severity: "error",
+        featureId: prevInv.featureId,
+        file: "features/registry.sql",
+        message: `BLOCKED: Active invariant '${prevInv.id}' (${prevInv.statement}) was deleted or disabled without ALLOW_FEATURE_REMOVAL=1.`,
+        fix: "Restore the invariant, supersede it to a stronger fence, or explicitly approve deprecation with an ADR.",
+      });
+      continue;
+    }
+    if (!ctx.allowRemoval && fenceStrength(curInv.fenceRung) < fenceStrength(prevInv.fenceRung)) {
+      violations.push({
+        id: `FLK:fence-downgraded:${prevInv.id}`,
+        rule: "invariant-fence-downgraded",
+        severity: "error",
+        featureId: prevInv.featureId,
+        file: curInv.file,
+        message: `BLOCKED: Invariant '${prevInv.id}' fence_rung downgraded from '${prevInv.fenceRung ?? "runtime"}' to '${curInv.fenceRung ?? "none"}'.`,
+        fix: "Keep an equal or stronger fence rung (R0 > R1 > R2 > R3 > runtime > none), or set ALLOW_FEATURE_REMOVAL=1 with human approval.",
+      });
+    }
   }
   return violations;
 }
@@ -120,7 +194,6 @@ function checkGitAntiDeletion(ctx: CheckContext): GuardViolation[] {
   if (!ctx.previousRegistry) return [];
   const violations: GuardViolation[] = [];
   const currentById = new Map(ctx.registry.features.map((f) => [f.id, f]));
-  const currentInvById = new Map(ctx.registry.invariants.map((i) => [i.id, i]));
 
   for (const prev of ctx.previousRegistry.features) {
     if (prev.status !== "active") continue;
@@ -160,22 +233,7 @@ function checkGitAntiDeletion(ctx: CheckContext): GuardViolation[] {
       }
     }
   }
-
-  for (const prevInv of ctx.previousRegistry.invariants) {
-    if (prevInv.status !== "active") continue;
-    const curInv = currentInvById.get(prevInv.id);
-    if (!curInv || (curInv.status === "removed" && !ctx.allowRemoval)) {
-      violations.push({
-        id: `FLK:invariant-deleted:${prevInv.id}`,
-        rule: "no-silent-invariant-deletion",
-        severity: "error",
-        featureId: prevInv.featureId,
-        file: "features/registry.sql",
-        message: `BLOCKED: Active invariant '${prevInv.id}' (${prevInv.statement}) was deleted or disabled without ALLOW_FEATURE_REMOVAL=1.`,
-        fix: "Restore the invariant or explicitly approve its deprecation with an ADR.",
-      });
-    }
-  }
+  violations.push(...checkGitInvariantDiff(ctx));
   return violations;
 }
 
@@ -211,6 +269,11 @@ function checkLiveExtractionDrift(ctx: CheckContext): GuardViolation[] {
       .filter((i) => i.guardAnchor)
       .map((i) => `${i.file}|${normalizeWhitespace(i.guardAnchor ?? "")}`),
   );
+  const regFingerprints = new Set(
+    ctx.registry.invariants
+      .filter((i) => i.astFingerprint)
+      .map((i) => `${i.file}|${i.astFingerprint ?? ""}`),
+  );
 
   for (const liveFeat of ctx.liveExtraction.features) {
     if (regFeatureIds.has(liveFeat.id)) continue;
@@ -243,7 +306,8 @@ function checkLiveExtractionDrift(ctx: CheckContext): GuardViolation[] {
   for (const liveInv of ctx.liveExtraction.invariants) {
     if (liveInv.source !== "ast" || !liveInv.guardAnchor) continue;
     const anchorKey = `${liveInv.file}|${normalizeWhitespace(liveInv.guardAnchor)}`;
-    if (regInvIds.has(liveInv.id) || regAnchors.has(anchorKey)) continue;
+    const fpKey = liveInv.astFingerprint ? `${liveInv.file}|${liveInv.astFingerprint}` : "";
+    if (regInvIds.has(liveInv.id) || regAnchors.has(anchorKey) || (fpKey && regFingerprints.has(fpKey))) continue;
     const rootHint = liveInv.rootTestPath ? ` (root test: ${liveInv.rootTestPath})` : "";
     violations.push({
       id: `FLK:new-invariant:${liveInv.id}`,
@@ -253,6 +317,60 @@ function checkLiveExtractionDrift(ctx: CheckContext): GuardViolation[] {
       file: liveInv.file,
       message: `Unrecorded new invariant '${liveInv.id}' in '${liveInv.file}:${liveInv.line}'${rootHint}: ${liveInv.statement}`,
       fix: "Run 'featlock extract --write' or 'featlock record-improvement' to save this invariant in features/registry.sql.",
+    });
+  }
+  return violations;
+}
+
+function checkStructuralAndInteractionHealth(ctx: CheckContext): GuardViolation[] {
+  if (ctx.registry.features.length === 0) return [];
+  const violations: GuardViolation[] = [...checkFeatureRelations(ctx.registry)];
+  const scatter = computeScatteringAndTangling(ctx.registry);
+  for (const hs of scatter.highScattering) {
+    violations.push({
+      id: `FLK:high-dos:${hs.featureId}`,
+      rule: "feature-high-scattering",
+      severity: "warn",
+      featureId: hs.featureId,
+      file: "features/registry.sql",
+      message: `High Degree of Scattering (DoS=${hs.files} files) for '${hs.featureId}': low cartridge deletability.`,
+      fix: "Consolidate feature logic behind a single cohesive module boundary.",
+    });
+  }
+  for (const ht of scatter.highTangling) {
+    violations.push({
+      id: `FLK:high-dof:${ht.file}`,
+      rule: "file-high-tangling",
+      severity: "warn",
+      file: ht.file,
+      message: `High Degree of Tangling (DoF=${ht.features.length} features: ${ht.features.join(", ")}) braided in '${ht.file}'.`,
+      fix: "Uncomplect braided feature responsibilities into separate feature modules.",
+    });
+  }
+  for (const pair of computeFeatureInteractions(ctx.registry, ctx.repoRoot)) {
+    if (!pair.pairwiseGap) continue;
+    violations.push({
+      id: `FLK:pairwise-gap:${pair.featureA}:${pair.featureB}`,
+      rule: "feature-interaction-untested",
+      severity: "warn",
+      featureId: pair.featureA,
+      file: "features/registry.sql",
+      message: `Interacting features '${pair.featureA}' & '${pair.featureB}' share (${pair.sharedVia.slice(0, 3).join(", ")}) with zero joint test file.`,
+      fix: "Add a pairwise (t=2) integration test exercising both features together.",
+    });
+  }
+  for (const flag of detectFeatureFlags(ctx.files, ctx.registry)) {
+    if (flag.status === "linked") continue;
+    violations.push({
+      id: `FLK:flag:${flag.status}:${flag.flag}:${flag.file}`,
+      rule: flag.status === "constant" ? "feature-flag-constant" : "feature-flag-unlinked",
+      severity: "warn",
+      file: flag.file,
+      message:
+        flag.status === "constant"
+          ? `Stale/constant feature toggle '${flag.flag}' hardcoded at ${flag.file}:${flag.line}.`
+          : `Undeclared feature toggle '${flag.flag}' at ${flag.file}:${flag.line} is not linked to any registered feature.`,
+      fix: "Remove zombie hardcoded toggles or link the toggle name in features/registry.sql.",
     });
   }
   return violations;
@@ -289,6 +407,7 @@ export default Plugin.define({
           ...checkGitAntiDeletion(checkCtx),
           ...checkVanishedFeatures(checkCtx),
           ...checkLiveExtractionDrift(checkCtx),
+          ...checkStructuralAndInteractionHealth(checkCtx),
           ...checkStagedDiffRecorded(checkCtx),
         ],
       });

@@ -2,7 +2,19 @@ export type FeatureStatus = "active" | "deprecated" | "removed";
 
 export type InvariantSource = "ast" | "repospec" | "veristack" | "agent" | "manual" | string;
 
-export type AuditAction = "added" | "improved" | "invariant_added" | "deprecated" | "removed";
+export type AuditAction = "added" | "improved" | "invariant_added" | "superseded" | "deprecated" | "removed";
+
+export type FenceRung = "R0" | "R1" | "R2" | "R3" | "runtime" | "none";
+
+export type InvariantOriginKind = "standard" | "bugfix";
+
+export type FeatureRelationKind = "requires" | "excludes" | "parent_of";
+
+export interface FeatureRelation {
+  readonly fromFeatureId: string;
+  readonly toFeatureId: string;
+  readonly relation: FeatureRelationKind;
+}
 
 export interface FeatureRecord {
   readonly id: string;
@@ -14,6 +26,8 @@ export interface FeatureRecord {
   readonly source: string;
   readonly adrRef?: string;
   readonly removalReason?: string;
+  readonly originRef?: string;
+  readonly rationale?: string;
 }
 
 export interface FeatureTestLink {
@@ -35,6 +49,13 @@ export interface InvariantRecord {
   readonly guardRef?: string;
   readonly guardAnchor?: string;
   readonly rootTestPath?: string;
+  readonly fenceRung?: FenceRung;
+  readonly supersededBy?: string;
+  readonly enclosingSymbol?: string;
+  readonly astFingerprint?: string;
+  readonly originKind?: InvariantOriginKind;
+  readonly originRef?: string;
+  readonly rationale?: string;
   readonly status: FeatureStatus;
 }
 
@@ -50,6 +71,7 @@ export interface RegistrySnapshot {
   readonly features: readonly FeatureRecord[];
   readonly tests: readonly FeatureTestLink[];
   readonly invariants: readonly InvariantRecord[];
+  readonly relations?: readonly FeatureRelation[];
   readonly auditLog: readonly AuditLogEntry[];
 }
 
@@ -179,6 +201,15 @@ export interface CheckHookEvent {
   readonly violations: GuardViolation[];
 }
 
+export interface SupersedeInvariantInput {
+  readonly repoRoot: string;
+  readonly invariantId: string;
+  readonly supersededBy: string;
+  readonly fenceRung?: FenceRung;
+  readonly rationale?: string;
+  readonly actor?: string;
+}
+
 export interface HostApiFacade {
   readonly listPlugins: () => readonly PluginStatus[];
   readonly extract: (repoRoot: string) => Promise<ExtractionOutput>;
@@ -194,6 +225,7 @@ export interface HostApiFacade {
     readonly feature: FeatureRecord;
     readonly tests: readonly FeatureTestLink[];
     readonly invariants?: readonly InvariantRecord[];
+    readonly relations?: readonly FeatureRelation[];
     readonly actor?: string;
   }) => Promise<RegistrySnapshot>;
   readonly recordImprovement: (input: {
@@ -202,8 +234,50 @@ export interface HostApiFacade {
     readonly summary: string;
     readonly extraTests?: readonly FeatureTestLink[];
     readonly extraInvariants?: readonly InvariantRecord[];
+    readonly extraRelations?: readonly FeatureRelation[];
+    readonly originRef?: string;
+    readonly rationale?: string;
     readonly actor?: string;
   }) => Promise<RegistrySnapshot>;
+  readonly supersedeInvariant: (input: SupersedeInvariantInput) => Promise<RegistrySnapshot>;
+  readonly analyzeMatrix: (repoRoot: string) => Promise<{
+    readonly scattering: {
+      readonly dosByFeature: Readonly<Record<string, number>>;
+      readonly dofByFile: Readonly<Record<string, number>>;
+      readonly highScattering: readonly { readonly featureId: string; readonly files: number }[];
+      readonly highTangling: readonly { readonly file: string; readonly features: readonly string[] }[];
+    };
+    readonly interactions: readonly {
+      readonly featureA: string;
+      readonly featureB: string;
+      readonly sharedVia: readonly string[];
+      readonly sharedTests: readonly string[];
+      readonly pairwiseGap: boolean;
+    }[];
+    readonly flags: readonly { readonly flag: string; readonly file: string; readonly line: number; readonly status: "linked" | "unlinked" | "constant" }[];
+  }>;
+  readonly affectedTests: (
+    repoRoot: string,
+    opts?: { readonly range?: string; readonly changedFiles?: readonly string[] },
+  ) => Promise<{
+    readonly changedFiles: readonly string[];
+    readonly affectedFeatures: readonly string[];
+    readonly transitiveFiles: readonly string[];
+    readonly prioritizedTests: readonly {
+      readonly testPath: string;
+      readonly featureIds: readonly string[];
+      readonly score: number;
+      readonly reason: string;
+    }[];
+  }>;
+  readonly concernSubgraph: (
+    repoRoot: string,
+    featureId: string,
+  ) => Promise<{
+    readonly nodes: readonly string[];
+    readonly edges: readonly { readonly from: string; readonly to: string; readonly kind: string }[];
+    readonly crossBoundaryLeaks: readonly string[];
+  } | null>;
   readonly writeRegistry: (repoRoot: string, snapshot: RegistrySnapshot) => Promise<string>;
   readonly readRegistry: (repoRoot: string) => Promise<RegistrySnapshot>;
   readonly buildAgentPasses: (repoRoot: string) => Promise<readonly AgentPassPacket[]>;
@@ -260,7 +334,9 @@ export interface FeatlockPluginContext {
 export interface FeatlockPluginDefinition {
   readonly id: string;
   readonly guarded?: boolean;
-  readonly setup: (
-    ctx: FeatlockPluginContext,
-  ) => void | (() => void | Promise<void>) | Promise<void | (() => void | Promise<void>)>;
+  readonly setup: (ctx: FeatlockPluginContext) => Promise<void | (() => Promise<void> | void)> | void | (() => Promise<void> | void);
+}
+
+export interface FeatlockPlugin extends FeatlockPluginDefinition {
+  readonly __featlockPlugin: true;
 }

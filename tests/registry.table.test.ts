@@ -117,4 +117,19 @@ describe("Registry Query, Duplicate & SQL Serialization Tables", () => {
     const ranked = Registry.findDuplicates(tieSnap, "payment retry ledger sync");
     expect(ranked.map((r) => r.featureId)).toEqual(["feat.m-pay", "feat.a-pay", "feat.z-pay"]);
   });
+
+  test("queryFeatures stems -ies plurals, preserves short 4-char tokens, and ranks area/id hits first", () => {
+    const stemSnap: RegistrySnapshot = {
+      features: [
+        { id: "feat.z-other", area: "other", name: "Helper", summary: "Retrying policy ties here", acceptanceCriteria: "ok", status: "active", source: "manual" },
+        { id: "feat.policy", area: "policy", name: "Policy Retry", summary: "Applies policies and retries", acceptanceCriteria: "ok", status: "active", source: "manual" },
+      ],
+      tests: [],
+      invariants: [],
+      auditLog: [],
+    };
+    expect(Registry.queryFeatures(stemSnap, "policies").map((f) => f.id)).toEqual(["feat.policy", "feat.z-other"]);
+    expect(Registry.queryFeatures(stemSnap, "ties").map((f) => f.id)).toEqual(["feat.z-other"]);
+    expect(Registry.queryFeatures(stemSnap, "retries").map((f) => f.id)).toEqual(["feat.policy", "feat.z-other"]);
+  });
 });

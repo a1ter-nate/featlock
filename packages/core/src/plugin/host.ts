@@ -29,7 +29,7 @@ import {
 import { Registry, REGISTRY_SQL_REL } from "../db/registry.ts";
 import { discoverRepo, listStagedFiles } from "../discover.ts";
 import { State, type RegistrationGroup } from "../state.ts";
-import { getBuiltinPlugins, GUARDED_PLUGIN_IDS } from "./internal.ts";
+import { getBuiltinPlugins, GuardAnalytics, GUARDED_PLUGIN_IDS } from "./internal.ts";
 
 export interface PluginOperation {
   readonly type: "add" | "remove";
@@ -387,6 +387,28 @@ export async function createPluginHost(opts: PluginHostOptions = {}): Promise<Pl
     checkDup: async (repoDir, description) => Registry.findDuplicates(Registry.readRepo(path.resolve(repoDir)), description),
     recordNew: async (input) => Registry.recordNew({ ...input, repoRoot: path.resolve(input.repoRoot) }),
     recordImprovement: async (input) => Registry.recordImprovement({ ...input, repoRoot: path.resolve(input.repoRoot) }),
+    supersedeInvariant: async (input) => Registry.supersedeInvariant({ ...input, repoRoot: path.resolve(input.repoRoot) }),
+    analyzeMatrix: async (repoDir) => {
+      const scan = discoverRepo(repoDir);
+      const reg = Registry.readRepo(scan.repoRoot);
+      return {
+        scattering: GuardAnalytics.computeScatteringAndTangling(reg),
+        interactions: GuardAnalytics.computeFeatureInteractions(reg, scan.repoRoot),
+        flags: GuardAnalytics.detectFeatureFlags(scan.files, reg),
+      };
+    },
+    affectedTests: async (repoDir, affectedOpts) => {
+      const abs = path.resolve(repoDir);
+      const reg = Registry.readRepo(abs);
+      return GuardAnalytics.selectAffectedTests(abs, reg, affectedOpts?.range, affectedOpts?.changedFiles);
+    },
+    concernSubgraph: async (repoDir, featureId) => {
+      const abs = path.resolve(repoDir);
+      const reg = Registry.readRepo(abs);
+      const feat = reg.features.find((f) => f.id === featureId);
+      if (!feat) return null;
+      return GuardAnalytics.projectConcernSubgraph(abs, feat, reg);
+    },
     writeRegistry: async (repoDir, snapshot) => {
       const sqlPath = Registry.writeSql(path.resolve(repoDir), snapshot);
       Registry.materializeDb(path.resolve(repoDir));

@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createPluginHost, type PluginOperation } from "@featlock/core";
 
-const REPO_SCOPED_COMMANDS = new Set(["extract", "check", "sync", "agent-pass", "hooks", "plugins"]);
+const REPO_SCOPED_COMMANDS = new Set(["extract", "check", "sync", "agent-pass", "hooks", "plugins", "matrix"]);
 
 function loadRepoOperations(repoDir: string): PluginOperation[] {
   const cfgPath = path.join(repoDir, ".featlock", "config.json");

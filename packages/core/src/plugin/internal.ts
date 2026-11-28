@@ -1,5 +1,7 @@
 import type { FeatlockPlugin } from "@featlock/plugin";
-import antiDeletionGuardPlugin from "../../../plugins/anti-deletion-guard/src/index.ts";
+import antiDeletionGuardPlugin, { GuardAnalytics } from "../../../plugins/anti-deletion-guard/src/index.ts";
+
+export { GuardAnalytics };
 import astScannerPlugin from "../../../plugins/ast-scanner/src/index.ts";
 import configPlugin from "../../../plugins/config/src/index.ts";
 import harnessesPlugin from "../../../plugins/harnesses/src/index.ts";

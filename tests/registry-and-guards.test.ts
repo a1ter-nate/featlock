@@ -158,6 +158,47 @@ describe("SQLite Anti-Deletion Triggers, Git Diff Guards, Dup Detection & Agent 
       expect(missingReason.ok).toBe(false);
       expect(missingReason.violations.some((v) => v.rule === "feature-removal-requires-adr")).toBe(true);
 
+      const isolatedDir = fs.mkdtempSync(path.join(os.tmpdir(), "featlock-guard-edges-"));
+      try {
+        fs.mkdirSync(path.join(isolatedDir, "tests"), { recursive: true });
+        fs.mkdirSync(path.join(isolatedDir, ".verification"), { recursive: true });
+        fs.writeFileSync(path.join(isolatedDir, "tests", "billing.test.ts"), 'test("billing", () => {});\n');
+        fs.writeFileSync(
+          path.join(isolatedDir, ".verification", "rungs.json"),
+          JSON.stringify({ rungs: { R0: { command: "echo ok", required: true } } }),
+        );
+        Registry.writeSql(isolatedDir, {
+          features: [
+            { id: "feat.billing", area: "billing", name: "Billing", summary: "Handles billing", acceptanceCriteria: "ok", status: "active", source: "ast" },
+          ],
+          tests: [{ featureId: "feat.billing", testPath: "tests/billing.test.ts", testPattern: "billing", rung: "R2" }],
+          invariants: [],
+          auditLog: [],
+        });
+        const noCodeRes = await host.check(isolatedDir, { strictDrift: true });
+        expect(noCodeRes.violations.some((v) => v.rule === "feature-removed-from-code")).toBe(false);
+        expect(noCodeRes.violations.some((v) => v.rule === "unrecorded-new-invariant")).toBe(false);
+
+        fs.mkdirSync(path.join(isolatedDir, "src", "billing"), { recursive: true });
+        fs.writeFileSync(
+          path.join(isolatedDir, "src", "billing", "index.ts"),
+          [
+            "const FEATURE_STALE = true;",
+            "export function run(flags: { get: (k: string) => boolean }) {",
+            '  const a = flags.get("billing");',
+            '  const b = flags.get("ghost-flag");',
+            "  return FEATURE_STALE && a && b;",
+            "}",
+          ].join("\n"),
+        );
+        const flagRes = await host.check(isolatedDir);
+        expect(flagRes.warnings.some((w) => w.rule === "feature-flag-constant")).toBe(true);
+        expect(flagRes.warnings.some((w) => w.rule === "feature-flag-unlinked" && w.message.includes("ghost-flag"))).toBe(true);
+        expect(flagRes.warnings.some((w) => w.message.includes("'billing'"))).toBe(false);
+      } finally {
+        fs.rmSync(isolatedDir, { recursive: true, force: true });
+      }
+
       execFileSync("git", ["checkout", "--", "features/registry.sql"], { cwd: repoDir, stdio: "ignore" });
       const improved = Registry.recordImprovement({
         repoRoot: repoDir,
