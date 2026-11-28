@@ -268,9 +268,6 @@ export function scanFileInvariants(file: DiscoveredFile, featureId: string): Inv
   }
   if (found.length <= 24) return found;
   return found
-    .toSorted((a, b) => {
-      const diff = b.confidence - a.confidence;
-      return diff !== 0 ? diff : a.line - b.line;
-    })
+    .toSorted((a, b) => (b.confidence - a.confidence) || (a.line - b.line))
     .slice(0, 24);
 }

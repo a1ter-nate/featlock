@@ -133,5 +133,15 @@ describe("Registry Query, Duplicate & SQL Serialization Tables", () => {
     expect(Registry.queryFeatures(stemSnap, "retries").map((f) => f.id)).toEqual(["feat.policy", "feat.z-other"]);
     expect(Registry.queryFeatures(BASE_SNAPSHOT, "verified").map((f) => f.id)).toEqual(["feat.auth.jwt"]);
     expect(Registry.queryFeatures(BASE_SNAPSHOT, "verifications").map((f) => f.id)).toEqual(["feat.auth.jwt"]);
+    expect(Registry.queryFeatures(BASE_SNAPSHOT, "exporting").map((f) => f.id)).toEqual(["feat.billing.invoice"]);
+    const batchSnap: RegistrySnapshot = {
+      features: [
+        { id: "feat.batch", area: "batch", name: "Batch runner", summary: "Runs batch jobs", acceptanceCriteria: "ok", status: "active", source: "manual" },
+      ],
+      tests: [],
+      invariants: [],
+      auditLog: [],
+    };
+    expect(Registry.queryFeatures(batchSnap, "batches").map((f) => f.id)).toEqual(["feat.batch"]);
   });
 });

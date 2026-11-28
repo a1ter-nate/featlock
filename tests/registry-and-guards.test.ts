@@ -192,8 +192,8 @@ describe("SQLite Anti-Deletion Triggers, Git Diff Guards, Dup Detection & Agent 
           ].join("\n"),
         );
         const flagRes = await host.check(isolatedDir);
-        expect(flagRes.warnings.some((w) => w.rule === "feature-flag-constant")).toBe(true);
-        expect(flagRes.warnings.some((w) => w.rule === "feature-flag-unlinked" && w.message.includes("ghost-flag"))).toBe(true);
+        expect(flagRes.warnings.some((w) => w.rule === "feature-flag-constant" && w.message.includes("Stale/constant"))).toBe(true);
+        expect(flagRes.warnings.some((w) => w.rule === "feature-flag-unlinked" && w.message.includes("Undeclared") && w.message.includes("ghost-flag"))).toBe(true);
         expect(flagRes.warnings.some((w) => w.message.includes("'billing'"))).toBe(false);
 
         Registry.writeSql(isolatedDir, {
