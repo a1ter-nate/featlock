@@ -116,6 +116,19 @@ describe("Registry Query, Duplicate & SQL Serialization Tables", () => {
     };
     const ranked = Registry.findDuplicates(tieSnap, "payment retry ledger sync");
     expect(ranked.map((r) => r.featureId)).toEqual(["feat.m-pay", "feat.a-pay", "feat.z-pay"]);
+
+    const areaBoostSnap: RegistrySnapshot = {
+      features: [
+        { id: "feat.a-generic", area: "misc", name: "Billing worker", summary: "Handles invoices", acceptanceCriteria: "ok", status: "active", source: "manual" },
+        { id: "feat.z-billing", area: "billing", name: "Worker", summary: "Handles invoices", acceptanceCriteria: "ok", status: "active", source: "manual" },
+      ],
+      tests: [],
+      invariants: [],
+      auditLog: [],
+    };
+    const areaRanked = Registry.findDuplicates(areaBoostSnap, "billing invoices");
+    expect(areaRanked[0]?.featureId).toBe("feat.z-billing");
+    expect((areaRanked[0]?.score ?? 0) > (areaRanked[1]?.score ?? 0)).toBe(true);
   });
 
   test("queryFeatures stems -ies plurals, preserves short 4-char tokens, and ranks area/id hits first", () => {

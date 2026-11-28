@@ -111,4 +111,31 @@ describe("Polyglot OSS Titan Calibration Matrix", () => {
       }
     },
   );
+
+  test("populates enclosingSymbol and caps per-file extracted invariants at 24", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "featlock-poly-cap-"));
+    try {
+      fs.mkdirSync(path.join(dir, "src", "limits"), { recursive: true });
+      const guards = Array.from(
+        { length: 30 },
+        (_, i) => `  if (n === ${i}) throw new RangeError("limit ${i}");`,
+      ).join("\n");
+      fs.writeFileSync(
+        path.join(dir, "src", "limits", "check.ts"),
+        `export function validateLimit(n: number): number {\n${guards}\n  return n;\n}\n`,
+        "utf8",
+      );
+      const host = await createPluginHost({ repoDir: dir });
+      try {
+        const out = await host.extract(dir);
+        expect(out.invariants.length).toBeLessThanOrEqual(24);
+        expect(out.invariants.length).toBeGreaterThan(0);
+        expect(out.invariants.every((inv) => inv.enclosingSymbol === "validateLimit")).toBe(true);
+      } finally {
+        await host.dispose();
+      }
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
