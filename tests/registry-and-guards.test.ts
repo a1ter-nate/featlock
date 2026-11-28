@@ -195,6 +195,40 @@ describe("SQLite Anti-Deletion Triggers, Git Diff Guards, Dup Detection & Agent 
         expect(flagRes.warnings.some((w) => w.rule === "feature-flag-constant")).toBe(true);
         expect(flagRes.warnings.some((w) => w.rule === "feature-flag-unlinked" && w.message.includes("ghost-flag"))).toBe(true);
         expect(flagRes.warnings.some((w) => w.message.includes("'billing'"))).toBe(false);
+
+        Registry.writeSql(isolatedDir, {
+          features: [
+            { id: "feat.billing", area: "billing", name: "Billing", summary: "Handles billing", acceptanceCriteria: "ok", status: "active", source: "ast" },
+            { id: "feat.ghost", area: "ghost", name: "Ghost", summary: "Missing", acceptanceCriteria: "ok", status: "active", source: "ast" },
+          ],
+          tests: [
+            { featureId: "feat.billing", testPath: "tests/billing.test.ts", testPattern: "billing", rung: "R2" },
+            { featureId: "feat.ghost", testPath: "tests/billing.test.ts", testPattern: "billing", rung: "R2" },
+          ],
+          invariants: [
+            {
+              id: "inv:superseded:1",
+              featureId: "feat.billing",
+              kind: "precondition-guard",
+              statement: "promoted",
+              file: "src/billing/removed-guard.ts",
+              line: 1,
+              confidence: 1,
+              source: "ast",
+              guardAnchor: "if (!x) throw new Error('x');",
+              rootTestPath: "tests/billing.test.ts",
+              fenceRung: "R1",
+              supersededBy: "type-boundary",
+              status: "active",
+            },
+          ],
+          auditLog: [],
+        });
+        const vanishBlocked = await host.check(isolatedDir, { allowRemoval: false });
+        expect(vanishBlocked.violations.some((v) => v.rule === "feature-removed-from-code" && v.featureId === "feat.ghost")).toBe(true);
+        expect(vanishBlocked.violations.some((v) => v.rule === "invariant-target-must-exist")).toBe(false);
+        const vanishAllowed = await host.check(isolatedDir, { allowRemoval: true });
+        expect(vanishAllowed.violations.some((v) => v.rule === "feature-removed-from-code")).toBe(false);
       } finally {
         fs.rmSync(isolatedDir, { recursive: true, force: true });
       }

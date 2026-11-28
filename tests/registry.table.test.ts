@@ -131,5 +131,7 @@ describe("Registry Query, Duplicate & SQL Serialization Tables", () => {
     expect(Registry.queryFeatures(stemSnap, "policies").map((f) => f.id)).toEqual(["feat.policy", "feat.z-other"]);
     expect(Registry.queryFeatures(stemSnap, "ties").map((f) => f.id)).toEqual(["feat.z-other"]);
     expect(Registry.queryFeatures(stemSnap, "retries").map((f) => f.id)).toEqual(["feat.policy", "feat.z-other"]);
+    expect(Registry.queryFeatures(BASE_SNAPSHOT, "verified").map((f) => f.id)).toEqual(["feat.auth.jwt"]);
+    expect(Registry.queryFeatures(BASE_SNAPSHOT, "verifications").map((f) => f.id)).toEqual(["feat.auth.jwt"]);
   });
 });
